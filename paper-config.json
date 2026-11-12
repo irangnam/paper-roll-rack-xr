@@ -1,0 +1,24 @@
+{
+  "model": "models/PaperRollRack.glb",
+  "surfaceY": 0,
+  "rolls": [
+    { "name": "Roll_01", "image": "textures/T_GiftWrap_Trees.jpg",       "tileWidth": 0.1257, "paperWidth": 0.305, "offsetU": 0, "backColor": "#f3f0e8" },
+    { "name": "Roll_02", "image": "textures/T_GiftWrap_Gingerbread.jpg", "tileWidth": 0.2513, "paperWidth": 0.381, "offsetU": 0, "backColor": "#f3f0e8" },
+    { "name": "Roll_03", "image": "textures/T_GiftWrap_Stripes.jpg",     "tileWidth": 0.10,   "paperWidth": 0.457, "offsetU": 0, "backColor": "#f3f0e8" }
+  ],
+  "interaction": {
+    "maxPull": 1.5,
+    "startLip": 0.025,
+    "grabRadius": 0.07,
+    "guideDistance": 0.08,
+    "contactDistance": 0.008,
+    "cutMode": "contact",
+    "cutCooldown": 0.4,
+    "minPieceLength": 0.02,
+    "maxPieces": 20,
+    "fallSpeed": 0.7,
+    "retractOnRelease": true,
+    "retractSpeed": 1.6,
+    "scissorsHand": "right"
+  }
+}

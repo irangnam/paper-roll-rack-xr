@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="data:,">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>포장지 패턴 편집기</title>
+<style>
+  :root { --bg:#16181d; --panel:#1f232a; --line:#2e333c; --text:#e9ecef; --mut:#9aa3ad; --acc:#e8590c; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.5 system-ui, -apple-system, "Apple SD Gothic Neo", sans-serif; }
+  #app { display: flex; height: 100%; }
+  #view { flex: 1; position: relative; min-width: 0; }
+  #view canvas { display: block; }
+  #toolbar { position: absolute; left: 12px; bottom: 12px; display: flex; gap: 6px; flex-wrap: wrap; }
+  #panel { width: 400px; overflow-y: auto; background: var(--panel); border-left: 1px solid var(--line); padding: 14px 16px 40px; }
+  h1 { font-size: 16px; margin: 0 0 2px; } h2 { font-size: 13px; margin: 18px 0 8px; color: var(--mut); font-weight: 600; letter-spacing: .02em; }
+  .sub { color: var(--mut); font-size: 12px; margin-bottom: 10px; }
+  .card { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; background: #1a1d23; }
+  .card .head { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; }
+  .card img { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); background: #333; }
+  .card .title { font-weight: 600; } .card .path { color: var(--mut); font-size: 11px; word-break: break-all; }
+  label.f { display: grid; grid-template-columns: 112px 1fr 64px; gap: 8px; align-items: center; margin: 5px 0; }
+  label.f span { color: var(--mut); }
+  input[type=range] { width: 100%; accent-color: var(--acc); }
+  input[type=number], input[type=text], select { width: 100%; background: #111318; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; font: inherit; }
+  input[type=color] { width: 100%; height: 26px; border: 1px solid var(--line); border-radius: 6px; background: none; padding: 0; }
+  .hint { color: var(--mut); font-size: 11px; margin: 2px 0 0 120px; }
+  .warn { color: #ffd43b; font-size: 11px; margin-top: 4px; }
+  button, .btn { background: #343a44; color: #fff; border: 0; border-radius: 7px; padding: 6px 10px; font: inherit; cursor: pointer; text-decoration: none; display: inline-block; }
+  button:hover, .btn:hover { background: #454c58; }
+  button.primary { background: var(--acc); } button.primary:hover { background: #f76707; }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  #msg { position: absolute; right: 12px; bottom: 12px; background: rgba(0,0,0,.7); padding: 6px 10px; border-radius: 8px; opacity: 0; transition: opacity .3s; }
+  #msg.on { opacity: 1; }
+</style>
+<script type="importmap">
+{ "imports": {
+    "three": "./lib/three/build/three.module.js",
+    "three/addons/": "./lib/three/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="app">
+  <div id="view">
+    <div id="toolbar">
+      <button id="pullAll">모두 30cm 당겨보기</button>
+      <button id="cutTest">자르기 테스트</button>
+      <button id="reset">롤 리셋</button>
+      <button id="clear">조각 지우기</button>
+    </div>
+    <div id="msg"></div>
+  </div>
+  <div id="panel">
+    <h1>🎁 포장지 패턴 편집기</h1>
+    <div class="sub">롤마다 이미지와 무늬 크기를 바꾸고, <b>paper-config.json</b> 으로 저장하거나 데모에 바로 적용해요.</div>
+    <div id="rolls"></div>
+
+    <h2>자른 종이 · 인터랙션</h2>
+    <div class="card" id="global"></div>
+
+    <h2>저장</h2>
+    <label style="display:flex;gap:6px;align-items:center;margin-bottom:6px"><input type="checkbox" id="embed"> 새로 넣은 이미지를 JSON 안에 포함 (data URL)</label>
+    <div class="row">
+      <button class="primary" id="apply">데모에 적용 (이 브라우저)</button>
+      <a class="btn" href="index.html" target="_blank">데모 열기 ↗</a>
+    </div>
+    <div class="row">
+      <button id="download">paper-config.json 다운로드</button>
+      <button id="load">JSON 불러오기</button>
+      <button id="defaults">기본값으로</button>
+      <input type="file" id="loadFile" accept=".json,application/json" hidden>
+    </div>
+    <div class="sub" style="margin-top:10px">
+      • <b>데모에 적용</b>: 이 브라우저의 index.html 이 바로 이 설정을 사용해요 (데모 화면의 ‘기본 설정으로’로 해제).<br>
+      • <b>다운로드</b>한 파일로 web/paper-config.json 을 바꾸면 모든 기기에 적용돼요. 새 이미지는 web/textures/ 에 넣거나 ‘JSON 안에 포함’을 켜세요.
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { WrappingPaperRack, DEFAULT_CONFIG, mergeConfig } from './src/wrapping-paper.js';
+
+const OVERRIDE_KEY = 'wrappingPaperConfig';
+const fileConfig = await fetch('paper-config.json').then((r) => r.json()).catch(() => ({}));
+let config = mergeConfig(JSON.parse(localStorage.getItem(OVERRIDE_KEY) || 'null') || fileConfig);
+const previews = {};   // roll index -> { dataUrl, fileName }  (새로 넣은 이미지)
+
+// ---------- 3D preview
+const view = document.getElementById('view');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+view.prepend(renderer.domElement);
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x1b1e24);
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.8;
+const sun = new THREE.DirectionalLight(0xffffff, 1.6); sun.position.set(-1, 3, 2); scene.add(sun);
+const camera = new THREE.PerspectiveCamera(40, 1, 0.01, 20);
+camera.position.set(0.55, 0.55, 1.05);
+const controls = new OrbitControls(camera, renderer.domElement); controls.target.set(0, 0.2, 0.05); controls.update();
+const grid = new THREE.GridHelper(2, 20, 0x3a3f47, 0x2a2e35); scene.add(grid);
+
+let rack = null;
+async function buildRack() {
+  if (rack) { scene.remove(rack.root); }
+  rack = new WrappingPaperRack(config, { renderer });
+  await rack.load();
+  scene.add(rack.root);
+  config = rack.config;
+}
+await buildRack();
+
+function resize() {
+  const w = view.clientWidth, h = view.clientHeight;
+  renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize); resize();
+
+const anim = []; // { i, from, to, t }
+let last = performance.now();
+renderer.setAnimationLoop(() => {
+  const now = performance.now(), dt = (now - last) / 1000; last = now;
+  for (const a of anim) { a.t = Math.min(1, a.t + dt / 1.2); rack.pullTo(a.i, a.from + (a.to - a.from) * (1 - (1 - a.t) ** 3)); }
+  for (let k = anim.length - 1; k >= 0; k--) if (anim[k].t >= 1) anim.splice(k, 1);
+  rack.update(dt);
+  renderer.render(scene, camera);
+});
+
+// ---------- UI helpers
+const $ = (id) => document.getElementById(id);
+const msgEl = $('msg'); let msgT;
+function msg(t) { msgEl.textContent = t; msgEl.classList.add('on'); clearTimeout(msgT); msgT = setTimeout(() => msgEl.classList.remove('on'), 2200); }
+
+function field(parent, label, { min, max, step, value, unit = '', onInput, type = 'range', options }) {
+  const l = document.createElement('label'); l.className = 'f';
+  const s = document.createElement('span'); s.textContent = label; l.append(s);
+  if (type === 'select') {
+    const sel = document.createElement('select');
+    for (const [v, t] of options) { const o = document.createElement('option'); o.value = v; o.textContent = t; sel.append(o); }
+    sel.value = value; sel.oninput = () => onInput(sel.value); sel.style.gridColumn = 'span 2'; l.append(sel);
+  } else if (type === 'color') {
+    const c = document.createElement('input'); c.type = 'color'; c.value = value; c.oninput = () => onInput(c.value);
+    c.style.gridColumn = 'span 2'; l.append(c);
+  } else {
+    const r = document.createElement('input'); r.type = 'range'; Object.assign(r, { min, max, step }); r.value = value;
+    const n = document.createElement('input'); n.type = 'number'; Object.assign(n, { min, max, step }); n.value = value; n.title = unit;
+    r.oninput = () => { n.value = r.value; onInput(+r.value); };
+    n.onchange = () => { r.value = n.value; onInput(+n.value); };
+    l.append(r, n);
+  }
+  parent.append(l); return l;
+}
+
+function imageAspect(i) { const img = rack.rolls[i]?.texture?.image; return img?.width ? img.height / img.width : 1; }
+
+function renderRolls() {
+  const box = $('rolls'); box.innerHTML = '';
+  config.rolls.forEach((rc, i) => {
+    const card = document.createElement('div'); card.className = 'card';
+    const head = document.createElement('div'); head.className = 'head';
+    const img = document.createElement('img'); img.src = previews[i]?.dataUrl || rc.image;
+    const info = document.createElement('div');
+    info.innerHTML = `<div class="title">롤 ${i + 1} <span style="color:var(--mut);font-weight:400">(${rc.name})</span></div><div class="path">${previews[i] ? '새 이미지: ' + previews[i].fileName : (rc.image.startsWith('data:') ? '포함된 이미지 (data URL)' : rc.image)}</div>`;
+    const pick = document.createElement('button'); pick.textContent = '이미지 바꾸기'; pick.style.marginLeft = 'auto';
+    const file = document.createElement('input'); file.type = 'file'; file.accept = 'image/*'; file.hidden = true;
+    pick.onclick = () => file.click();
+    file.onchange = async () => {
+      const f = file.files[0]; if (!f) return;
+      const dataUrl = await toDataUrl(f, 2048);
+      previews[i] = { dataUrl, fileName: f.name };
+      await rack.setPattern(i, { image: dataUrl });
+      renderRolls(); msg(`롤 ${i + 1} 이미지 교체: ${f.name}`);
+    };
+    head.append(img, info, pick, file); card.append(head);
+
+    const aspect = imageAspect(i);
+    const hint = document.createElement('div'); hint.className = 'hint';
+    const setHint = () => { const tw = rack.rolls[i].Tu * 100; hint.textContent = `이미지 1장 = 가로 ${tw.toFixed(1)} cm × 세로 ${(tw * aspect).toFixed(1)} cm · 종이 폭에 ${(rack.rolls[i].width / rack.rolls[i].Tu).toFixed(1)}번 반복`; };
+    field(card, '무늬 크기 (cm)', { min: 2, max: 80, step: 0.1, value: +(rc.tileWidth * 100).toFixed(2), onInput: (v) => { rack.setPattern(i, { tileWidth: v / 100 }); setHint(); } });
+    card.append(hint); setHint();
+    field(card, '종이 폭 (cm)', { min: 10, max: 47, step: 0.1, value: +(rc.paperWidth * 100).toFixed(1), onInput: (v) => { rack.setPaperWidth(i, v / 100); setHint(); } });
+    field(card, '가로 위치', { min: 0, max: 1, step: 0.01, value: rc.offsetU ?? 0, onInput: (v) => rack.setPattern(i, { offsetU: v }) });
+    field(card, '종이 뒷면 색', { type: 'color', value: rc.backColor || '#f3f0e8', onInput: (v) => rack.setPattern(i, { backColor: v }) });
+    box.append(card);
+  });
+}
+
+function renderGlobal() {
+  const g = $('global'); g.innerHTML = ''; const it = config.interaction;
+  field(g, '바닥 높이 (cm)', { min: -20, max: 20, step: 0.5, value: (config.surfaceY * 100), onInput: (v) => { config.surfaceY = v / 100; } });
+  g.insertAdjacentHTML('beforeend', '<div class="hint">자른 종이가 내려앉는 가상 바닥. 0 = 랙 바닥면</div>');
+  field(g, '자르기 방식', { type: 'select', value: it.cutMode, options: [['contact', '가위가 닿으면 자름'], ['trigger', '절취선 + 트리거로 자름']], onInput: (v) => (it.cutMode = v) });
+  field(g, '가위 손', { type: 'select', value: it.scissorsHand, options: [['right', '오른손'], ['left', '왼손']], onInput: (v) => (it.scissorsHand = v) });
+  field(g, '절취선 거리 (cm)', { min: 1, max: 20, step: 0.5, value: it.guideDistance * 100, onInput: (v) => (it.guideDistance = v / 100) });
+  field(g, '접촉 거리 (cm)', { min: 0.2, max: 3, step: 0.1, value: it.contactDistance * 100, onInput: (v) => (it.contactDistance = v / 100) });
+  field(g, '잡기 거리 (cm)', { min: 2, max: 15, step: 0.5, value: it.grabRadius * 100, onInput: (v) => (it.grabRadius = v / 100) });
+  field(g, '최대 당김 (cm)', { min: 30, max: 300, step: 5, value: it.maxPull * 100, onInput: (v) => (it.maxPull = v / 100) });
+  field(g, '최대 조각 수', { min: 1, max: 60, step: 1, value: it.maxPieces, onInput: (v) => (it.maxPieces = v) });
+}
+
+function toDataUrl(file, maxSide) {
+  return new Promise((res, rej) => {
+    const img = new Image();
+    img.onload = () => {
+      const s = Math.min(1, maxSide / Math.max(img.width, img.height));
+      const c = document.createElement('canvas'); c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(img.src);
+      res(c.toDataURL('image/jpeg', 0.9));
+    };
+    img.onerror = rej; img.src = URL.createObjectURL(file);
+  });
+}
+
+/** forStorage: 'demo' = 새 이미지는 data URL 로 / 'file' = 체크박스에 따라 경로 또는 data URL */
+function exportConfig(forStorage) {
+  const out = structuredClone({ model: config.model, surfaceY: config.surfaceY, rolls: config.rolls, interaction: config.interaction });
+  out.rolls.forEach((rc, i) => {
+    const r = rack.rolls[i];
+    rc.tileWidth = +r.Tu.toFixed(4); rc.paperWidth = +r.width.toFixed(4); rc.offsetU = +r.offU.toFixed(3);
+    rc.backColor = '#' + r.back.getHexString();
+    if (previews[i]) rc.image = (forStorage === 'demo' || $('embed').checked) ? previews[i].dataUrl : `textures/${previews[i].fileName}`;
+  });
+  return out;
+}
+
+$('apply').onclick = () => {
+  try { localStorage.setItem(OVERRIDE_KEY, JSON.stringify(exportConfig('demo'))); msg('데모에 적용했어요. index.html 을 새로고침하세요.'); }
+  catch (e) { msg('저장 공간이 부족해요. 이미지를 더 작게 해 주세요.'); console.error(e); }
+};
+$('download').onclick = () => {
+  const cfg = exportConfig('file');
+  const blob = new Blob([JSON.stringify(cfg, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'paper-config.json'; a.click();
+  const missing = Object.entries(previews).filter(() => !$('embed').checked).map(([, p]) => p.fileName);
+  msg(missing.length ? `다운로드 완료 — ${missing.join(', ')} 을(를) web/textures/ 에 넣어 주세요` : '다운로드 완료');
+};
+$('load').onclick = () => $('loadFile').click();
+$('loadFile').onchange = async (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  config = mergeConfig(JSON.parse(await f.text())); for (const k in previews) delete previews[k];
+  await buildRack(); renderRolls(); renderGlobal(); msg(`${f.name} 불러옴`);
+};
+$('defaults').onclick = async () => {
+  localStorage.removeItem(OVERRIDE_KEY);
+  config = mergeConfig(Object.keys(fileConfig).length ? fileConfig : DEFAULT_CONFIG); for (const k in previews) delete previews[k];
+  await buildRack(); renderRolls(); renderGlobal(); msg('paper-config.json 기본값으로 되돌렸어요');
+};
+$('pullAll').onclick = () => rack.rolls.forEach((r, i) => anim.push({ i, from: r.pull, to: r.pull + 0.3, t: 0 }));
+$('cutTest').onclick = () => { rack.rolls.forEach((r, i) => { if (r.pull > r.cutDist + 0.05) rack.cut(i, r.cutDist + 0.01); }); };
+$('reset').onclick = () => rack.resetRolls();
+$('clear').onclick = () => rack.clearPieces();
+
+renderRolls(); renderGlobal();
+window.editor = { rack: () => rack, exportConfig, THREE };
+</script>
+</body>
+</html>

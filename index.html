@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="data:,">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>포장지 롤 랙 — WebXR 데모</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #1d2026; font-family: system-ui, -apple-system, "Apple SD Gothic Neo", sans-serif; }
+  #hud { position: fixed; left: 12px; top: 12px; max-width: 360px; color: #e9ecef; background: rgba(15,17,21,.78);
+         border-radius: 10px; padding: 12px 14px; font-size: 13px; line-height: 1.55; backdrop-filter: blur(6px); }
+  #hud h1 { font-size: 14px; margin: 0 0 6px; }
+  #hud kbd { background: #343a40; border-radius: 4px; padding: 0 5px; font-size: 12px; }
+  #hud .row { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  #hud button, #hud a { background: #3a4048; color: #fff; border: 0; border-radius: 6px; padding: 5px 9px; font-size: 12px; cursor: pointer; text-decoration: none; }
+  #hud button:hover, #hud a:hover { background: #4b525c; }
+  #status { margin-top: 8px; color: #adb5bd; font-variant-numeric: tabular-nums; white-space: pre; }
+  #override { display: none; margin-top: 8px; color: #ffd43b; }
+</style>
+<script type="importmap">
+{ "imports": {
+    "three": "./lib/three/build/three.module.js",
+    "three/addons/": "./lib/three/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="hud">
+  <h1>🎁 포장지 롤 랙 데모</h1>
+  <div><b>VR</b>: 그립/트리거로 종이 끝을 잡고 당기기 · <b>오른손 앞 끝 = 가위</b> — 종이에 가까이 대면 절취선, 닿으면 잘림 · 자른 종이를 놓으면 바닥에 내려앉고, 안 자르고 놓으면 롤로 말려 들어감</div>
+  <div style="margin-top:6px"><b>PC</b> (왼손 잡기 + 오른손 가위)<br>
+  ① 종이 아래 끝을 <b>마우스 드래그</b> = 왼손으로 잡고 당기기<br>
+  ② 드래그 중 <kbd>Space</kbd> = 왼손 고정 → 이제 마우스가 <b>가위</b><br>
+  ③ 종이 위에 마우스 = 절취선, <b>클릭</b> = 자르기 (조각은 왼손에 남음)<br>
+  ④ <kbd>Space</kbd> = 왼손 놓기 — 자른 종이는 바닥으로, 안 자른 종이는 롤로 말려 들어감<br>
+  왼손 고정 중 <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 상하좌우 · <kbd>Q</kbd>/<kbd>E</kbd> 앞/뒤 · <kbd>R</kbd> 리셋 · <kbd>X</kbd> 조각 지우기 · <kbd>Esc</kbd> 놓기</div>
+  <div id="override">⚠ 패턴 편집기에서 적용한 설정을 사용 중 <button id="clearOverride">기본 설정으로</button></div>
+  <div class="row"><button id="reset">롤 리셋</button><button id="clear">조각 지우기</button><a href="pattern-editor.html">패턴 편집기 →</a></div>
+  <div id="status"></div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { VRButton } from 'three/addons/webxr/VRButton.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { WrappingPaperRack } from './src/wrapping-paper.js';
+import { bindXRControllers, makeScissorsMarker } from './src/xr-input.js';
+
+const OVERRIDE_KEY = 'wrappingPaperConfig';
+
+// ---------- config (패턴 편집기에서 '데모에 적용'한 설정이 있으면 우선)
+let config = await fetch('paper-config.json').then((r) => r.json()).catch(() => ({}));
+const override = localStorage.getItem(OVERRIDE_KEY);
+if (override) { try { config = JSON.parse(override); document.getElementById('override').style.display = 'block'; } catch {} }
+document.getElementById('clearOverride').onclick = () => { localStorage.removeItem(OVERRIDE_KEY); location.reload(); };
+
+// ---------- scene
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.xr.enabled = true;
+document.body.appendChild(renderer.domElement);
+document.body.appendChild(VRButton.createButton(renderer));
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x24272d);
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.8;
+const sun = new THREE.DirectionalLight(0xffffff, 1.6); sun.position.set(-1, 3, 2); scene.add(sun);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x404040, 0.4));
+
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.01, 50);
+camera.position.set(0.55, 1.25, 0.55);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 0.92, -0.55); controls.update();
+
+// 방 바닥 (참고용)
+const grid = new THREE.GridHelper(6, 30, 0x444a52, 0x31363d); scene.add(grid);
+
+// ---------- rack: 책상 높이에 놓인 것처럼 배치 (테이블은 만들지 않음, 가상 바닥만)
+const rack = new WrappingPaperRack(config, { renderer });
+await rack.load();
+rack.root.position.set(0, 0.75, -0.55);
+scene.add(rack.root);
+
+// 자른 종이가 내려앉는 가상 바닥 표시 (보이지 않게 하려면 이 블록 삭제)
+const drop = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 0.9), new THREE.MeshBasicMaterial({ color: 0x8ab4ff, transparent: true, opacity: 0.06, depthWrite: false }));
+drop.rotation.x = -Math.PI / 2; drop.position.set(0, rack.config.surfaceY - 0.0005, 0.3);
+rack.root.add(drop);
+const dropEdge = new THREE.LineSegments(new THREE.EdgesGeometry(drop.geometry), new THREE.LineBasicMaterial({ color: 0x8ab4ff, transparent: true, opacity: 0.35 }));
+drop.add(dropEdge);
+
+rack.addEventListener('cut', (e) => console.log(`✂ Roll ${e.roll + 1}: ${(e.length * 100).toFixed(1)} cm`));
+bindXRControllers(renderer, scene, rack);
+
+// ---------- desktop (PC 테스트): 왼손 = 잡기/당기기, 오른손 = 가위
+// 마우스 드래그        : 왼손으로 종이 끝(또는 자른 종이)을 잡고 당김
+// 드래그 중 Space     : 왼손 고정 → 마우스가 오른손(가위)이 됨
+// 가위 상태에서 종이 위 : 절취선 표시, 클릭 = 그 위치에서 자르기 (자른 조각은 왼손에 남음)
+// 왼손 고정 중 W/A/S/D/Q/E : 왼손 이동 (위/왼/아래/오른/앞/뒤)
+// Space 다시          : 왼손 놓기 (자른 종이는 바닥으로, 안 자른 종이는 롤로 말려 들어감)
+const leftHand = new THREE.Object3D(); leftHand.name = 'DesktopLeftHand'; scene.add(leftHand);
+const handMark = new THREE.Mesh(new THREE.SphereGeometry(0.012, 16, 12), new THREE.MeshBasicMaterial({ color: 0x4dabf7, toneMapped: false, depthTest: false, transparent: true, opacity: 0.85 }));
+handMark.renderOrder = 20; handMark.visible = false; leftHand.add(handMark);
+const rightTip = new THREE.Object3D(); rightTip.add(makeScissorsMarker()); rightTip.visible = false; scene.add(rightTip);
+const ray = new THREE.Raycaster(); const ndc = new THREE.Vector2();
+const dragPlane = new THREE.Plane();
+let mode = 'idle';            // 'idle' | 'drag' (왼손 마우스로 당기는 중) | 'locked' (왼손 고정, 마우스 = 가위)
+let leftHolding = false;
+const keys = new Set();
+
+function setRay(e) { ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1); ray.setFromCamera(ndc, camera); }
+function hitPaper(list) { return ray.intersectObjects(list, false)[0] || null; }
+function releaseLeft() {
+  if (leftHolding) rack.release(leftHand);
+  leftHolding = false; handMark.visible = false; mode = 'idle';
+  rightTip.visible = false; rack.setScissors(null); controls.enabled = true;
+}
+function lockLeft() {
+  if (mode !== 'drag' || !leftHolding) return;
+  mode = 'locked'; controls.enabled = true;   // 고정 중엔 카메라도 돌려볼 수 있음 (종이 위에서는 가위)
+}
+
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0 || renderer.xr.isPresenting) return;
+  setRay(e);
+  if (mode === 'locked') {                       // 오른손 가위로 자르기
+    if (rightTip.visible && rack.tryCut()) { e.preventDefault(); e.stopImmediatePropagation(); controls.enabled = false; setTimeout(() => (controls.enabled = true), 0); }
+    return;
+  }
+  const hit = hitPaper([...rack.getSheetMeshes().filter((m) => m.visible), ...rack.getPieceMeshes()]);
+  if (!hit) return;
+  leftHand.position.copy(hit.point); leftHand.updateMatrixWorld();
+  if (rack.grab(leftHand)) {
+    leftHolding = true; mode = 'drag'; handMark.visible = true; controls.enabled = false;
+    const n = camera.getWorldDirection(new THREE.Vector3()); n.y = 0; n.normalize();
+    dragPlane.setFromNormalAndCoplanarPoint(n, hit.point);
+  }
+}, true);
+addEventListener('pointermove', (e) => {
+  if (renderer.xr.isPresenting) return;
+  setRay(e);
+  if (mode === 'drag') { ray.ray.intersectPlane(dragPlane, leftHand.position); return; }
+  if (mode === 'locked') {
+    const hit = hitPaper(rack.getSheetMeshes().filter((m) => m.visible));
+    if (hit) {
+      const n = hit.face.normal.clone().transformDirection(hit.object.matrixWorld);
+      if (n.dot(ray.ray.direction) > 0) n.negate();
+      rightTip.position.copy(hit.point).addScaledVector(n, 0.02); rightTip.visible = true;
+      rack.setScissors(rightTip); controls.enabled = false;
+    } else { rightTip.visible = false; rack.setScissors(null); controls.enabled = true; }
+  }
+});
+addEventListener('pointerup', () => { if (mode === 'drag') releaseLeft(); });
+addEventListener('keydown', (e) => {
+  if (e.code === 'Space') {
+    e.preventDefault();
+    if (e.repeat) return;
+    if (mode === 'drag') lockLeft(); else if (mode === 'locked') releaseLeft();
+    return;
+  }
+  keys.add(e.code);
+  if (e.code === 'KeyR') { releaseLeft(); rack.resetRolls(); }
+  if (e.code === 'KeyX') { releaseLeft(); rack.clearPieces(); }
+  if (e.code === 'Escape') releaseLeft();
+});
+addEventListener('keyup', (e) => keys.delete(e.code));
+addEventListener('blur', () => keys.clear());
+
+const _fw = new THREE.Vector3(), _rt = new THREE.Vector3();
+function moveLeftHand(dt) {
+  if (mode !== 'locked' || !keys.size) return;
+  camera.getWorldDirection(_fw); _fw.y = 0; _fw.normalize(); _rt.crossVectors(_fw, camera.up).normalize();
+  const v = 0.35 * dt;
+  if (keys.has('KeyW')) leftHand.position.y += v;
+  if (keys.has('KeyS')) leftHand.position.y -= v;
+  if (keys.has('KeyA')) leftHand.position.addScaledVector(_rt, -v);
+  if (keys.has('KeyD')) leftHand.position.addScaledVector(_rt, v);
+  if (keys.has('KeyQ')) leftHand.position.addScaledVector(_fw, -v);   // 내 쪽으로 (당기기)
+  if (keys.has('KeyE')) leftHand.position.addScaledVector(_fw, v);
+}
+document.getElementById('reset').onclick = () => { releaseLeft(); rack.resetRolls(); };
+document.getElementById('clear').onclick = () => { releaseLeft(); rack.clearPieces(); };
+addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+
+// ---------- loop
+const status = document.getElementById('status');
+let t = 0, last = performance.now();
+renderer.setAnimationLoop(() => {
+  const now = performance.now(), dt = (now - last) / 1000; last = now;
+  moveLeftHand(dt);
+  rack.update(dt);
+  if ((t += dt) > 0.2) {
+    t = 0;
+    const s = rack.getState();
+    status.textContent = s.rolls.map((r, i) => `롤 ${i + 1}: 나온 길이 ${(r.pull * 100).toFixed(1)} cm`).join('\n') +
+      `\n바닥의 조각: ${s.pieces.filter((p) => p.state === 'rest').length}개` +
+      (s.guide ? `\n절취선: 롤 ${s.guide.roll + 1}, ${(s.guide.cutLength * 100).toFixed(1)} cm` : '') +
+      `\nPC: ${({ idle: '대기', drag: '왼손으로 당기는 중 (Space = 고정)', locked: '왼손 고정 · 마우스 = 가위 (Space = 놓기)' })[mode]}`;
+  }
+  renderer.render(scene, camera);
+});
+window.app = { THREE, rack, scene, camera, renderer, leftHand, controls, get mode() { return mode; } };
+</script>
+</body>
+</html>
