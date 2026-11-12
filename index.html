@@ -53,7 +53,12 @@ const OVERRIDE_KEY = 'wrappingPaperConfig';
 // ---------- config (패턴 편집기에서 '데모에 적용'한 설정이 있으면 우선)
 let config = await fetch('paper-config.json').then((r) => r.json()).catch(() => ({}));
 const override = localStorage.getItem(OVERRIDE_KEY);
-if (override) { try { config = JSON.parse(override); document.getElementById('override').style.display = 'block'; } catch {} }
+if (override) { try {
+  const o = JSON.parse(override);
+  // 예전 버전 편집기에서 저장한 설정이면 인터랙션(자르기 방식 등)은 최신 기본값을 씀 — 패턴·크기만 가져옴
+  if (!o.interaction || o.interaction.snipsToCut === undefined) o.interaction = config.interaction;
+  config = o; document.getElementById('override').style.display = 'block';
+} catch {} }
 document.getElementById('clearOverride').onclick = () => { localStorage.removeItem(OVERRIDE_KEY); location.reload(); };
 
 // ---------- scene
