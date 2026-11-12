@@ -20,6 +20,9 @@
 | `lib/three/` | three.js r187 (오프라인 동작용 로컬 사본, MIT) |
 | `serve.command` | macOS 로컬 서버 실행 스크립트 |
 
+## 높이 조절
+랙과 자른 종이가 놓이는 면의 높이는 기본 0.55 m 예요. 주소 뒤에 `?h=0.4` 처럼 붙이면 바꿀 수 있어요 (예: https://irangnam.github.io/paper-roll-rack-xr/?h=0.4).
+
 ## 조작
 **VR**
 - 그립 또는 트리거: 종이 끝(또는 바닥에 늘어진 끝)을 잡고 당기기 / 자른 종이 잡기
