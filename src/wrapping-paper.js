@@ -8,8 +8,10 @@
  *   rack.update(dt);                   // 매 프레임
  *   rack.grab(handObj)  -> boolean     // 종이 끝 또는 자른 종이 잡기
  *   rack.release(handObj)              // 놓기 (자른 종이는 바닥으로 떨어지고, 자르지 않은 종이는 롤로 말려 들어감)
- *   rack.setScissors(tipObj | null)    // 가위 날 끝 위치. 종이에 가까우면 절취선 가이드, 닿으면 자름
- *   rack.tryCut()                      // 현재 절취선에서 자르기 (트리거 방식/데스크톱용)
+ *   rack.setScissors(tipObj | null)    // 가위 날 끝 위치 (종이 가까이 가져가면 자를 위치가 정해짐)
+ *   rack.snip()                        // 가위질 1번. snipsToCut(기본 3)번 채우면 그 위치에서 잘림
+ *   rack.tryCut()                      // 즉시 자르기
+ *   rack.flipPiece(piece)              // 바닥의 자른 종이 뒤집기 (들고 있을 땐 손목을 돌리면 됨)
  *   rack.setPattern(i, {image, tileWidth, offsetU, backColor})
  *   rack.setPaperWidth(i, meters)
  *   rack.addEventListener('cut', e => e.roll, e.length, e.piece)
@@ -33,9 +35,12 @@ export const DEFAULT_CONFIG = {
     maxPull: 1.5,               // 최대로 뽑을 수 있는 길이 (m)
     startLip: 0.025,            // 커터 아래로 나와 있는 기본 길이
     grabRadius: 0.07,           // 종이 끝/조각을 잡을 수 있는 거리
-    guideDistance: 0.08,        // 가위가 이 거리 안에 오면 절취선 표시
-    contactDistance: 0.008,     // 가위가 이 거리 안(또는 종이 면 통과)이면 자름
-    cutMode: 'contact',         // 'contact' = 닿으면 자름, 'trigger' = tryCut() 호출 시 자름
+    guideDistance: 0.06,        // 가위(날 끝)가 종이에서 이 거리 안이면 '자를 수 있는 위치'
+    contactDistance: 0.008,     // cutMode 'contact' 일 때만: 이 거리 안이면 바로 자름
+    cutMode: 'snip',            // 'snip' = 가위질(snip) 횟수를 채우면 자름, 'contact' = 닿으면 자름, 'trigger' = tryCut()
+    snipsToCut: 3,              // 자르기에 필요한 가위질 횟수
+    snipWindow: 2.0,            // 가위질 사이 최대 간격 (초). 넘으면 처음부터
+    showGuide: false,           // 절취선(점선) 표시
     cutCooldown: 0.4,
     minPieceLength: 0.02,
     maxPieces: 20,              // 바닥에 남길 최대 조각 수 (오래된 것부터 제거)
@@ -248,7 +253,8 @@ function simulatePiece(pc, dt) {
   }
   // 바닥에서는 가장 낮은 줄이 면 기준 0 이 되도록 — 갑자기 옮기지 않고 서서히
   { let mn = Infinity; for (const z of zs) mn = Math.min(mn, z);
-    const target = rest ? -mn : 0;
+    let mx = -Infinity; for (const z of zs) mx = Math.max(mx, z);
+    const target = rest ? (sm.flipped ? -mx : -mn) : 0;
     sm.zShift = (sm.zShift ?? 0) + (target - (sm.zShift ?? 0)) * (1 - Math.exp(-5 * Math.max(dt, 1 / 120)));
     for (let r = 0; r <= rows; r++) zs[r] += sm.zShift; }
   if (pc.state === 'held' && m.parent === sm.hand) {
@@ -461,7 +467,7 @@ export class WrappingPaperRack extends THREE.EventDispatcher {
       }
     }
     if (bp) {
-      hand.attach(bp.mesh); bp.state = 'held'; bp.vel = 0;
+      hand.attach(bp.mesh); bp.state = 'held'; bp.vel = 0; bp.sim.wasHeld = true;
       setAnchor(bp.sim, Math.round((bp.length / 2 - bp._grabY) / bp.sim.h));
       bp.sim.grabX = THREE.MathUtils.clamp(hand.worldToLocal(bp.mesh.getWorldPosition(new THREE.Vector3())).x * 0, -bp.width / 2, bp.width / 2);
       bp.sim.hand = hand; bp.sim.prevHand = null;
@@ -483,6 +489,46 @@ export class WrappingPaperRack extends THREE.EventDispatcher {
   tryCut() {
     if (!this.guide) return null;
     return this.cut(this.guide.roll.index, this.guide.d);
+  }
+
+  /** 가위질 1번. 가위 날 끝이 늘어진 종이 가까이 있을 때만 셈.
+   *  같은 자리에서 snipWindow 초 안에 snipsToCut 번 하면 그 위치에서 잘림 */
+  snip() {
+    const it = this.config.interaction, now = performance.now() / 1000, g = this.guide;
+    if (!g) { this._snip = null; this.dispatchEvent({ type: 'snip', count: 0, needed: it.snipsToCut, near: false }); return null; }
+    const sp = this._snip;
+    if (!sp || sp.roll !== g.roll || Math.abs(sp.d - g.d) > 0.05 || now - sp.t > it.snipWindow) this._snip = { roll: g.roll, d: g.d, n: 0, t: now };
+    const s = this._snip; s.n++; s.t = now; s.d = (s.d * (s.n - 1) + g.d) / s.n;
+    this.dispatchEvent({ type: 'snip', count: s.n, needed: it.snipsToCut, near: true, roll: g.roll.index });
+    if (s.n >= it.snipsToCut) { this._snip = null; return this.cut(g.roll.index, s.d); }
+    return null;
+  }
+
+  /** 바닥(또는 떨어지는 중)의 자른 종이를 뒤집음: 살짝 들렸다가 반대 면으로 내려앉음 */
+  flipPiece(pc) {
+    if (!pc || pc.state === 'held') return;
+    pc.sim.flipped = !pc.sim.flipped;
+    pc.target = this._flatTarget(pc.yaw ?? 0, pc.sim.flipped);
+    pc.mesh.position.y += Math.min(0.12, pc.length * 0.35);
+    pc.state = 'falling'; pc.vel = 0.6; pc.sim.fallT = 0.6; pc.sim.restT = 0;
+  }
+
+  /** 수평으로 눕힌 자세. flipped = 뒷면이 위 */
+  _flatTarget(yaw, flipped) {
+    return new THREE.Quaternion().setFromEuler(_e.set(0, yaw + (flipped ? Math.PI : 0), 0))
+      .multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(flipped ? Math.PI / 2 : -Math.PI / 2, 0, 0)));
+  }
+
+  /** 월드 좌표에서 가장 가까운 자른 종이 */
+  pieceNear(worldPos, maxDist = 0.1) {
+    let best = null, bd = maxDist;
+    for (const pc of this.pieces) {
+      const p = pc.mesh.worldToLocal(_v.copy(worldPos));
+      const dx = Math.max(0, Math.abs(p.x) - pc.width / 2), dy = Math.max(0, Math.abs(p.y) - pc.length / 2);
+      const d = Math.hypot(dx, dy, p.z);
+      if (d < bd) { bd = d; best = pc; }
+    }
+    return best;
   }
 
   /** i번 롤을 접점에서 d 만큼 아래 지점에서 자름. 아래쪽 조각이 떨어져 나옴 */
@@ -514,7 +560,7 @@ export class WrappingPaperRack extends THREE.EventDispatcher {
     let holder = null;
     for (const [hand, h] of this.holds) if (h.type === 'sheet' && h.roll === r) holder = hand;
     if (holder) {
-      holder.attach(mesh); piece.state = 'held';
+      holder.attach(mesh); piece.state = 'held'; piece.sim.wasHeld = true;
       setAnchor(piece.sim, piece.sim.rows);   // 종이 아래 끝을 잡고 있었음
       piece.sim.grabX = 0;
       piece.sim.hand = holder; piece.sim.prevHand = null;
@@ -534,12 +580,21 @@ export class WrappingPaperRack extends THREE.EventDispatcher {
   _drop(pc) {
     this.root.attach(pc.mesh);
     pc.state = 'falling'; pc.vel = 0; pc.sim.fallT = 0; pc.sim.hand = null; pc.sim.restT = 0;
-    // 눕는 방향: 조각의 길이 방향(-Y)을 수평으로 투영. 무늬 면이 위로.
+    // 눕는 방향: 조각의 길이 방향(-Y)을 수평으로 투영.
+    // 놓는 순간 위를 향한 면이 그대로 위로 (손목을 돌려 뒤집어 놓으면 뒷면이 위)
     const dir = _v.set(0, -1, 0).applyQuaternion(pc.mesh.quaternion); dir.y = 0;
     if (dir.lengthSq() < 0.04) dir.set(0, 0, 1);
+    const up = _v2.set(0, 0, 1).applyQuaternion(pc.mesh.quaternion).y;   // 무늬 면 법선의 위쪽 성분
+    let faceUp = up;
+    if (Math.abs(up) < 0.35 && this.viewer) {            // 거의 세워서 들고 있었으면: 내(카메라) 쪽을 보던 면이 위로
+      const toEye = this.viewer.getWorldPosition(new THREE.Vector3()).sub(pc.mesh.getWorldPosition(new THREE.Vector3())).normalize();
+      faceUp = _v2.set(0, 0, 1).applyQuaternion(pc.mesh.getWorldQuaternion(new THREE.Quaternion())).dot(toEye);
+    }
+    pc.sim.flipped = pc.sim.wasHeld ? faceUp < 0 : !!pc.sim.flipped;
+    pc.sim.wasHeld = false;
     const yaw = Math.atan2(dir.x, dir.z);
-    pc.target = new THREE.Quaternion().setFromEuler(_e.set(0, yaw, 0))
-      .multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0)));
+    pc.yaw = yaw;
+    pc.target = this._flatTarget(yaw, pc.sim.flipped);
   }
 
   _removePiece(pc) {
@@ -885,7 +940,7 @@ export class WrappingPaperRack extends THREE.EventDispatcher {
     if (!best) { this._hideGuide(); return; }
     const touching = best.dist <= it.contactDistance || best.crossed;
     this.guide = best;
-    this._showGuide(best.roll, best.d, touching);
+    if (it.showGuide) this._showGuide(best.roll, best.d, touching);
     if (it.cutMode === 'contact' && touching && best.roll.cooldown <= 0) {
       this.cut(best.roll.index, best.d);
       this._hideGuide();

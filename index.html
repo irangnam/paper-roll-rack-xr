@@ -27,13 +27,14 @@
 <body>
 <div id="hud">
   <h1>🎁 포장지 롤 랙 데모</h1>
-  <div><b>VR</b>: 그립/트리거로 종이 끝을 잡고 당기기 · <b>오른손 앞 끝 = 가위</b> — 종이에 가까이 대면 절취선, 닿으면 잘림 · 자른 종이를 놓으면 바닥에 내려앉고, 안 자르고 놓으면 롤로 말려 들어감</div>
+  <div><b>VR 손</b>: <b>주먹</b> = 종이 끝 잡기(펴면 놓기) · <b>가위 손</b>(검지·중지만 펴기)으로 종이에 대고 <b>가위질 3번</b> = 자르기 · 들고 손목을 돌려 놓으면 <b>뒷면이 위로</b><br>
+  <b>VR 컨트롤러</b>: 그립 = 잡기 · 오른손 트리거 = 가위질 (3번에 잘림)</div>
   <div style="margin-top:6px"><b>PC</b> (왼손 잡기 + 오른손 가위)<br>
   ① 종이 아래 끝을 <b>마우스 드래그</b> = 왼손으로 잡고 당기기<br>
   ② 드래그 중 <kbd>Space</kbd> = 왼손 고정 → 이제 마우스가 <b>가위</b><br>
-  ③ 종이 위에 마우스 = 절취선, <b>클릭</b> = 자르기 (조각은 왼손에 남음)<br>
+  ③ 종이 위에 마우스 = 가위 위치, <b>클릭 3번</b> = 가위질 3번 → 자르기 (조각은 왼손에 남음)<br>
   ④ <kbd>Space</kbd> = 왼손 놓기 — 자른 종이는 바닥으로, 안 자른 종이는 롤로 말려 들어감<br>
-  왼손 고정 중 <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 상하좌우 · <kbd>Q</kbd>/<kbd>E</kbd> 앞/뒤 · <kbd>R</kbd> 리셋 · <kbd>X</kbd> 조각 지우기 · <kbd>Esc</kbd> 놓기</div>
+  <kbd>F</kbd> = 종이 뒤집기 (들고 있는 종이 / 마우스 아래 바닥 종이) · 왼손 고정 중 <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 상하좌우 · <kbd>Q</kbd>/<kbd>E</kbd> 앞/뒤 · <kbd>R</kbd> 리셋 · <kbd>X</kbd> 조각 지우기 · <kbd>Esc</kbd> 놓기</div>
   <div id="override">⚠ 패턴 편집기에서 적용한 설정을 사용 중 <button id="clearOverride">기본 설정으로</button></div>
   <div class="row"><button id="reset">롤 리셋</button><button id="clear">조각 지우기</button><a href="pattern-editor.html">패턴 편집기 →</a></div>
   <div id="status"></div>
@@ -45,7 +46,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { WrappingPaperRack } from './src/wrapping-paper.js';
-import { bindXRControllers, makeScissorsMarker } from './src/xr-input.js';
+import { bindXRControllers, makeScissorsMarker, XR_SESSION_INIT } from './src/xr-input.js';
 
 const OVERRIDE_KEY = 'wrappingPaperConfig';
 
@@ -63,7 +64,7 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.xr.enabled = true;
 renderer.xr.setReferenceSpaceType('local-floor');   // 실제 바닥 = y 0
 document.body.appendChild(renderer.domElement);
-document.body.appendChild(VRButton.createButton(renderer));
+document.body.appendChild(VRButton.createButton(renderer, XR_SESSION_INIT));   // 손 추적 요청
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x24272d);
@@ -86,6 +87,7 @@ const grid = new THREE.GridHelper(6, 30, 0x444a52, 0x31363d); scene.add(grid);
 const rack = new WrappingPaperRack(config, { renderer });
 await rack.load();
 rack.root.position.set(0, RACK_Y, -0.55);
+rack.viewer = camera;   // 세워 든 종이를 놓을 때: 내 쪽을 보던 면이 위로
 scene.add(rack.root);
 
 // 자른 종이가 내려앉는 가상 바닥 표시 (보이지 않게 하려면 이 블록 삭제)
@@ -96,7 +98,9 @@ const dropEdge = new THREE.LineSegments(new THREE.EdgesGeometry(drop.geometry), 
 drop.add(dropEdge);
 
 rack.addEventListener('cut', (e) => console.log(`✂ Roll ${e.roll + 1}: ${(e.length * 100).toFixed(1)} cm`));
-bindXRControllers(renderer, scene, rack);
+const xrInput = bindXRControllers(renderer, scene, rack);
+let snipText = '';
+rack.addEventListener('snip', (e) => { snipText = e.near ? `가위질 ${e.count}/${e.needed}` : '가위가 종이에서 멀어요'; setTimeout(() => (snipText = ''), 1500); });
 
 // ---------- desktop (PC 테스트): 왼손 = 잡기/당기기, 오른손 = 가위
 // 마우스 드래그        : 왼손으로 종이 끝(또는 자른 종이)을 잡고 당김
@@ -118,7 +122,7 @@ function setRay(e) { ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / inn
 function hitPaper(list) { return ray.intersectObjects(list, false)[0] || null; }
 function releaseLeft() {
   if (leftHolding) rack.release(leftHand);
-  leftHolding = false; handMark.visible = false; mode = 'idle';
+  leftHolding = false; handMark.visible = false; mode = 'idle'; flipTarget = 0; leftHand.rotation.y = 0;
   rightTip.visible = false; rack.setScissors(null); controls.enabled = true;
 }
 function lockLeft() {
@@ -130,7 +134,7 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
   if (e.button !== 0 || renderer.xr.isPresenting) return;
   setRay(e);
   if (mode === 'locked') {                       // 오른손 가위로 자르기
-    if (rightTip.visible && rack.tryCut()) { e.preventDefault(); e.stopImmediatePropagation(); controls.enabled = false; setTimeout(() => (controls.enabled = true), 0); }
+    if (rightTip.visible) { rack.snip(); e.preventDefault(); e.stopImmediatePropagation(); controls.enabled = false; setTimeout(() => (controls.enabled = true), 0); }
     return;
   }
   const hit = hitPaper([...rack.getSheetMeshes().filter((m) => m.visible), ...rack.getPieceMeshes()]);
@@ -142,9 +146,13 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
     dragPlane.setFromNormalAndCoplanarPoint(n, hit.point);
   }
 }, true);
+const lastPointer = new THREE.Vector3(); let flipTarget = 0;
+const _floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 addEventListener('pointermove', (e) => {
   if (renderer.xr.isPresenting) return;
   setRay(e);
+  { const hp = hitPaper(rack.getPieceMeshes()); if (hp) lastPointer.copy(hp.point);
+    else { _floorPlane.constant = -(RACK_Y + rack.config.surfaceY); ray.ray.intersectPlane(_floorPlane, lastPointer); } }
   if (mode === 'drag') { ray.ray.intersectPlane(dragPlane, leftHand.position); return; }
   if (mode === 'locked') {
     const hit = hitPaper(rack.getSheetMeshes().filter((m) => m.visible));
@@ -168,6 +176,10 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyR') { releaseLeft(); rack.resetRolls(); }
   if (e.code === 'KeyX') { releaseLeft(); rack.clearPieces(); }
   if (e.code === 'Escape') releaseLeft();
+  if (e.code === 'KeyF') {                                   // 뒤집기
+    if (leftHolding) { flipTarget += Math.PI; }              // 들고 있는 종이: 왼손을 반 바퀴 돌림
+    else { const pc = rack.pieceNear(lastPointer, 0.15); if (pc) rack.flipPiece(pc); }
+  }
 });
 addEventListener('keyup', (e) => keys.delete(e.code));
 addEventListener('blur', () => keys.clear());
@@ -194,18 +206,20 @@ let t = 0, last = performance.now();
 renderer.setAnimationLoop(() => {
   const now = performance.now(), dt = (now - last) / 1000; last = now;
   moveLeftHand(dt);
+  leftHand.rotation.y += (flipTarget - leftHand.rotation.y) * (1 - Math.exp(-8 * dt));   // F 로 뒤집을 때 부드럽게
+  if (renderer.xr.isPresenting) xrInput.update();
   rack.update(dt);
   if ((t += dt) > 0.2) {
     t = 0;
     const s = rack.getState();
     status.textContent = s.rolls.map((r, i) => `롤 ${i + 1}: 나온 길이 ${(r.pull * 100).toFixed(1)} cm`).join('\n') +
       `\n바닥의 조각: ${s.pieces.filter((p) => p.state === 'rest').length}개` +
-      (s.guide ? `\n절취선: 롤 ${s.guide.roll + 1}, ${(s.guide.cutLength * 100).toFixed(1)} cm` : '') +
+      (snipText ? `\n✂ ${snipText}` : '') +
       `\nPC: ${({ idle: '대기', drag: '왼손으로 당기는 중 (Space = 고정)', locked: '왼손 고정 · 마우스 = 가위 (Space = 놓기)' })[mode]}`;
   }
   renderer.render(scene, camera);
 });
-window.app = { THREE, rack, scene, camera, renderer, leftHand, controls, get mode() { return mode; } };
+window.app = { THREE, rack, scene, camera, renderer, leftHand, controls, xrInput, get mode() { return mode; } };
 </script>
 </body>
 </html>

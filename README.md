@@ -24,13 +24,17 @@
 랙과 자른 종이가 놓이는 면의 높이는 기본 0.55 m 예요. 주소 뒤에 `?h=0.4` 처럼 붙이면 바꿀 수 있어요 (예: https://irangnam.github.io/paper-roll-rack-xr/?h=0.4).
 
 ## 조작
-**VR**
-- 그립 또는 트리거: 종이 끝(또는 바닥에 늘어진 끝)을 잡고 당기기 / 자른 종이 잡기
-- 오른손 컨트롤러 앞 9 cm = 가위 날 끝 (빨간 점). 늘어진 종이에 8 cm 이내로 가까이 가면 **절취선(빨간 점선) + 잘릴 길이**가 뜨고, 닿으면 그 위치에서 잘림
-- 종이를 잡은 채로 자르면 자른 조각을 그대로 들고 있음 → 놓으면 가상 바닥으로 떨어져 무늬 면이 위로 눕고 남음 (최대 20장)
+**VR — 손 추적** (컨트롤러를 내려놓으면 자동으로 손 인식)
+- **주먹 쥐기** = 종이 끝 / 바닥의 자른 종이 잡기, **손 펴기** = 놓기
+- **가위 손** (검지·중지만 펴고 약지·새끼는 접기)으로 늘어진 종이에 손가락 끝을 대고 **벌렸다 붙이기 3번** = 그 자리에서 자르기
+- 종이를 들고 **손목을 돌린 뒤 놓으면** 그때 위를 향한 면 그대로 바닥에 놓임 (세워서 들고 있었으면 내 쪽을 보던 면이 위로)
+- 자르지 않고 놓은 종이는 롤로 말려 들어감 · 절취선 가이드는 없음 (`showGuide: true` 로 다시 켤 수 있음)
 
-**PC**: 종이 끝 마우스 드래그 = 왼손으로 잡고 당기기 → 드래그 중 `Space` = 왼손 고정(이제 마우스 = 오른손 가위) → 종이 위에 마우스 = 절취선, 클릭 = 자르기 → `Space` = 왼손 놓기 · 고정 중 `W/A/S/D` 상하좌우, `Q/E` 앞/뒤 · `R` 리셋 · `X` 조각 지우기 · `Esc` 놓기
-- 자르지 않고 놓은 종이는 롤로 다시 말려 들어갑니다 (`retractOnRelease`, `retractSpeed`).
+**VR — 컨트롤러**: 그립 = 잡기/놓기 · 오른손 트리거 = 가위질 1번 (3번에 잘림)
+
+**PC**: 종이 끝 마우스 드래그 = 왼손으로 잡기 → 드래그 중 `Space` = 왼손 고정(마우스 = 가위) → 종이 위에서 **클릭 3번** = 자르기 → `Space` = 놓기 · `F` = 뒤집기(들고 있는 종이 / 마우스 아래 바닥 종이) · 고정 중 `W/A/S/D` 상하좌우, `Q/E` 앞뒤 · `R` 리셋 · `X` 조각 지우기 · `Esc` 놓기
+
+손 모양 판정 기준(손가락 접힘/폄 거리, 가위 벌림 간격)은 `src/xr-input.js` 의 `HAND` 에서 조절할 수 있어요.
 
 ## 게임에 넣기
 ```js
@@ -50,7 +54,9 @@ rack.update(dt);
 // 직접 입력 처리 시 (손/가위 = 아무 Object3D)
 rack.grab(handObject) / rack.release(handObject)
 rack.setScissors(scissorsTipObject)   // null 이면 해제
-rack.tryCut()                         // cutMode 'trigger' 일 때
+rack.snip()                           // 가위질 1번 (snipsToCut 번이면 잘림)
+rack.flipPiece(piece)                 // 바닥 종이 뒤집기
+rack.tryCut()                         // 바로 자르기
 rack.addEventListener('cut',  e => { e.roll; e.length; e.piece });
 rack.addEventListener('land', e => { e.piece });
 rack.setPattern(0, { image: 'textures/새무늬.jpg', tileWidth: 0.15 });
