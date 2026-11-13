@@ -29,13 +29,14 @@
   <h1>🎁 포장지 롤 랙 데모</h1>
   <div><b>VR 손</b>: <b>주먹</b> = 종이 끝 잡기(펴면 놓기) · <b>가위 손</b>(검지·중지만 펴기)으로 종이에 대고 <b>가위질 3번</b> = 자르기 · 들고 손목을 돌려 놓으면 <b>뒷면이 위로</b><br>
   <b>VR 컨트롤러</b>: 그립 = 잡기 · 오른손 트리거 = 가위질 (3번에 잘림)<br>
-  <b>🎁 포장</b>: 자른 종이를 바닥에 놓고(무늬를 밖으로 하려면 뒤집어서) → 배스밤을 잡아 종이 위에 놓기 → 꼭짓점 4개를 하나씩 잡아 배스밤 위로 들어 올렸다 놓기</div>
+  <b>🎁 포장</b>: 테이블 앞 포장지의 꼭짓점(흰 점) 4개를 하나씩 잡아 배스밤 위로 들어 올렸다 놓기 · 배스밤을 잘라 놓은 종이 위로 옮기면 그 무늬로 포장<br>
+  <b>📦 리본 상자</b>(포장 자리 왼쪽): 뚜껑을 잡아 들어 올리면 열림, 내리면 닫힘</div>
   <div style="margin-top:6px"><b>PC</b> (왼손 잡기 + 오른손 가위)<br>
   ① 종이 아래 끝을 <b>마우스 드래그</b> = 왼손으로 잡고 당기기<br>
   ② 드래그 중 <kbd>Space</kbd> = 왼손 고정 → 이제 마우스가 <b>가위</b><br>
   ③ 종이 위에 마우스 = 가위 위치, <b>클릭 3번</b> = 가위질 3번 → 자르기 (조각은 왼손에 남음)<br>
   ④ <kbd>Space</kbd> = 왼손 놓기 — 자른 종이는 바닥으로, 안 자른 종이는 롤로 말려 들어감<br>
-  <kbd>B</kbd> = 배스밤 리셋 · <kbd>F</kbd> = 종이 뒤집기 (들고 있는 종이 / 마우스 아래 바닥 종이) · 왼손 고정 중 <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 상하좌우 · <kbd>Q</kbd>/<kbd>E</kbd> 앞/뒤 · <kbd>R</kbd> 리셋 · <kbd>X</kbd> 조각 지우기 · <kbd>Esc</kbd> 놓기</div>
+  <kbd>O</kbd> = 리본 상자 열기/닫기 · <kbd>B</kbd> = 배스밤 리셋 · <kbd>F</kbd> = 종이 뒤집기 (들고 있는 종이 / 마우스 아래 바닥 종이) · 왼손 고정 중 <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 상하좌우 · <kbd>Q</kbd>/<kbd>E</kbd> 앞/뒤 · <kbd>R</kbd> 리셋 · <kbd>X</kbd> 조각 지우기 · <kbd>Esc</kbd> 놓기</div>
   <div id="override">⚠ 패턴 편집기에서 적용한 설정을 사용 중 <button id="clearOverride">기본 설정으로</button></div>
   <div class="row"><button id="reset">롤 리셋</button><button id="clear">조각 지우기</button><button id="bomb">배스밤 리셋</button><a href="pattern-editor.html">패턴 편집기 →</a></div>
   <div id="status"></div>
@@ -44,11 +45,13 @@
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { WrappingPaperRack } from './src/wrapping-paper.js?v=9';
-import { GiftWrapStation } from './src/gift-wrap.js?v=9';
-import { bindXRControllers, makeScissorsMarker, XR_SESSION_INIT } from './src/xr-input.js?v=9';
+import { WrappingPaperRack } from './src/wrapping-paper.js?v=11';
+import { GiftWrapStation } from './src/gift-wrap.js?v=11';
+import { RibbonBox } from './src/ribbon-box.js?v=11';
+import { bindXRControllers, makeScissorsMarker, XR_SESSION_INIT } from './src/xr-input.js?v=11';
 
 const OVERRIDE_KEY = 'wrappingPaperConfig';
 
@@ -80,37 +83,41 @@ scene.environmentIntensity = 0.8;
 const sun = new THREE.DirectionalLight(0xffffff, 1.6); sun.position.set(-1, 3, 2); scene.add(sun);
 scene.add(new THREE.HemisphereLight(0xffffff, 0x404040, 0.4));
 
-// 랙(=자른 종이가 놓이는 바닥면) 높이. 주소 뒤에 ?h=0.4 처럼 붙여 바꿀 수 있음 (m)
-const RACK_Y = Math.max(0, Math.min(1.5, parseFloat(new URLSearchParams(location.search).get('h')) || 0.55));
+// ---------- 작업 공간: 블렌더 WorkTable.blend 배치 그대로 (테이블 + 롤 랙 + 포장 자리 + 리본 상자)
+// 테이블 윗면 높이 = 1.0 m (블렌더). 주소 뒤 ?h=0.8 처럼 붙이면 그 높이로 전체를 옮김
+const TABLE_TOP = 1.0;
+const H = Math.max(0.3, Math.min(1.5, parseFloat(new URLSearchParams(location.search).get('h')) || TABLE_TOP));
+const workspace = new THREE.Group(); workspace.name = 'Workspace';
+workspace.position.set(0, H - TABLE_TOP, -0.55);
+scene.add(workspace);
+const gltfLoader = new GLTFLoader();
+const [tableGltf, giftGltf, boxGltf] = await Promise.all(['models/WorkTable.glb', 'models/GiftWrap.glb', 'models/RibbonBox.glb'].map((u) => gltfLoader.loadAsync(u)));
+workspace.add(tableGltf.scene);
+
 const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.01, 50);
-camera.position.set(0.55, RACK_Y + 0.5, 0.55);
+camera.position.set(0.5, H + 0.45, 0.35);
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, RACK_Y + 0.17, -0.55); controls.update();
+controls.target.set(0, H + 0.12, -0.55); controls.update();
 
 // 방 바닥 (참고용)
 const grid = new THREE.GridHelper(6, 30, 0x444a52, 0x31363d); scene.add(grid);
 
-// ---------- rack: 책상 높이에 놓인 것처럼 배치 (테이블은 만들지 않음, 가상 바닥만)
+// ---------- 롤 랙: 테이블 뒤쪽 (블렌더 Anchor_Rack)
 const rack = new WrappingPaperRack(config, { renderer });
 await rack.load();
-rack.root.position.set(0, RACK_Y, -0.55);
+rack.root.position.set(0, TABLE_TOP, -0.245);
+workspace.add(rack.root);
 rack.viewer = camera;   // 세워 든 종이를 놓을 때: 내 쪽을 보던 면이 위로
-scene.add(rack.root);
-
-// 자른 종이가 내려앉는 가상 바닥 표시 (보이지 않게 하려면 이 블록 삭제)
-const drop = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 0.9), new THREE.MeshBasicMaterial({ color: 0x8ab4ff, transparent: true, opacity: 0.06, depthWrite: false }));
-drop.rotation.x = -Math.PI / 2; drop.position.set(0, rack.config.surfaceY - 0.0005, 0.3);
-rack.root.add(drop);
-const dropEdge = new THREE.LineSegments(new THREE.EdgesGeometry(drop.geometry), new THREE.LineBasicMaterial({ color: 0x8ab4ff, transparent: true, opacity: 0.35 }));
-drop.add(dropEdge);
 
 rack.addEventListener('cut', (e) => console.log(`✂ Roll ${e.roll + 1}: ${(e.length * 100).toFixed(1)} cm`));
 // 배스밤 포장: 자른 종이를 바닥(테이블)에 놓고 → 배스밤을 그 위에 올리고 → 꼭짓점 4개를 배스밤 위로 접어 올리기
-const station = new GiftWrapStation(rack, { radius: 0.045 });
+const station = new GiftWrapStation(rack, giftGltf.scene, { parent: workspace });
 let wrapText = '';
 station.addEventListener('placed', () => (wrapText = '배스밤을 올렸어요 — 꼭짓점을 위로 접어 올리세요 (0/4)'));
 station.addEventListener('fold', (e) => (wrapText = `꼭짓점 접기 ${e.count}/4`));
 station.addEventListener('wrapped', () => (wrapText = '🎁 포장 완료! 선물을 들어 옮길 수 있어요'));
+// 리본 상자: 랙 왼쪽, 뚜껑을 잡아 들어 올리면 열림
+const ribbonBox = new RibbonBox(rack, boxGltf.scene, { parent: workspace });
 const xrInput = bindXRControllers(renderer, scene, rack);
 let snipText = '';
 rack.addEventListener('snip', (e) => { snipText = e.near ? `가위질 ${e.count}/${e.needed}` : '가위가 종이에서 멀어요'; setTimeout(() => (snipText = ''), 1500); });
@@ -150,7 +157,7 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
     if (rightTip.visible) { rack.snip(); e.preventDefault(); e.stopImmediatePropagation(); controls.enabled = false; setTimeout(() => (controls.enabled = true), 0); }
     return;
   }
-  const hit = hitPaper([...station.getMeshes(), ...rack.getSheetMeshes().filter((m) => m.visible), ...rack.getPieceMeshes()]);
+  const hit = hitPaper([...ribbonBox.getMeshes(), ...station.getMeshes(), ...rack.getSheetMeshes().filter((m) => m.visible), ...rack.getPieceMeshes()]);
   if (!hit) return;
   leftHand.position.copy(hit.point); leftHand.updateMatrixWorld();
   if (rack.grab(leftHand)) {
@@ -165,7 +172,7 @@ addEventListener('pointermove', (e) => {
   if (renderer.xr.isPresenting) return;
   setRay(e);
   { const hp = hitPaper(rack.getPieceMeshes()); if (hp) lastPointer.copy(hp.point);
-    else { _floorPlane.constant = -(RACK_Y + rack.config.surfaceY); ray.ray.intersectPlane(_floorPlane, lastPointer); } }
+    else { _floorPlane.constant = -(H + rack.config.surfaceY); ray.ray.intersectPlane(_floorPlane, lastPointer); } }
   if (mode === 'drag') { ray.ray.intersectPlane(dragPlane, leftHand.position); return; }
   if (mode === 'locked') {
     const hit = hitPaper(rack.getSheetMeshes().filter((m) => m.visible));
@@ -188,6 +195,7 @@ addEventListener('keydown', (e) => {
   keys.add(e.code);
   if (e.code === 'KeyR') { releaseLeft(); rack.resetRolls(); }
   if (e.code === 'KeyX') { releaseLeft(); rack.clearPieces(); }
+  if (e.code === 'KeyO') ribbonBox.toggle();
   if (e.code === 'KeyB') { releaseLeft(); station.reset(); wrapText = ''; }
   if (e.code === 'Escape') releaseLeft();
   if (e.code === 'KeyF') {                                   // 뒤집기
@@ -235,7 +243,7 @@ renderer.setAnimationLoop(() => {
   }
   renderer.render(scene, camera);
 });
-window.app = { THREE, rack, scene, camera, renderer, leftHand, controls, xrInput, station, get mode() { return mode; } };
+window.app = { THREE, rack, scene, camera, renderer, leftHand, controls, xrInput, station, ribbonBox, get mode() { return mode; } };
 </script>
 </body>
 </html>
