@@ -83,7 +83,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { WrappingPaperRack, DEFAULT_CONFIG, mergeConfig } from './src/wrapping-paper.js';
+import { WrappingPaperRack, DEFAULT_CONFIG, mergeConfig } from './src/wrapping-paper.js?v=8';
 
 const OVERRIDE_KEY = 'wrappingPaperConfig';
 const fileConfig = await fetch('paper-config.json').then((r) => r.json()).catch(() => ({}));
