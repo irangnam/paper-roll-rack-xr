@@ -460,10 +460,37 @@ export class WrappingPaperRack extends THREE.EventDispatcher {
     return info;
   }
 
+  /** 자동 진행: hand(아무 Object3D)가 i번 롤 종이 끝을 바로 잡음 (거리 검사 없음) — 이후 hand 를 움직이면 당겨짐 */
+  grabSheet(i, hand) {
+    const r = this.rolls[i]; if (!r) return false;
+    for (const [h, v] of this.holds) if (v.roll === r) this.holds.delete(h);
+    r.retracting = false; this.holds.set(hand, { type: 'sheet', roll: r });
+    return true;
+  }
+
+  /** i번 롤 늘어진 종이 끝(월드) */
+  sheetEnd(i, out = new THREE.Vector3()) {
+    const r = this.rolls[i]; const e = r.path[r.path.length - 1];
+    this.root.updateMatrixWorld(true);
+    return out.set(0, e.y, e.z).applyMatrix4(r.pivot.matrixWorld);
+  }
+
+  /** 자동 진행: 잡고 있던 손을 떼고 d(기본: 쉬는 길이) 아래를 조각으로 끊어 돌려줌.
+   *  조각은 랙 관리(떨어지기·바닥)에서 빠지고 평평한 판 그대로 — 호출한 쪽에서 움직임 */
+  tearOff(i, d = this.restPull(i)) {
+    const r = this.rolls[i]; if (!r) return null;
+    for (const [h, v] of this.holds) if (v.roll === r) this.holds.delete(h);
+    const pc = this.cut(i, d); if (!pc) return null;
+    this.takePiece(pc);
+    pc.state = 'auto';
+    return pc;
+  }
+
   /** 롤 강조(가리킬 때): k = 0 이면 끔 */
   setHighlight(i, color, k) {
     const r = this.rolls[i]; if (!r) return;
-    for (const m of [r.rollMat, r.sheetMat]) { m.emissive.set(color); m.emissiveIntensity = k; }
+    r.rollMat.emissive.set(color); r.rollMat.emissiveIntensity = k;
+    r.sheetMat.emissive.set(color); r.sheetMat.emissiveIntensity = k * 0.3;   // 늘어진 종이는 무늬가 보이게 약하게
   }
 
   /** 월드 점 p 에서 i번 롤(감긴 종이 원통 + 늘어진 종이 끝)까지 거리 — 손가락으로 톡 칠 때 */

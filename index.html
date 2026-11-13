@@ -27,9 +27,9 @@
 <body>
 <div id="hud">
   <h1>🎁 배스밤 포장 데모</h1>
-  <div id="helpAuto"><b>① 포장지 고르기</b>: 롤을 <b>가리키고 집기</b>(엄지·검지 붙이기 / 트리거) 또는 <b>손가락으로 톡</b> · PC는 <b>클릭</b><br>
-  → 종이가 저절로 잘려 테이블에 놓이고 배스밤이 그 위로 올라가요<br>
-  <b>② 감싸 모으기</b>: <b>두 손</b>으로 배스밤을 감싸듯 모으기 (한 손이면 배스밤을 <b>집고 있기</b> · PC는 배스밤을 <b>누르고 있기</b>)<br>
+  <div id="helpAuto"><b>① 포장지 당기기</b>: 롤을 <b>잡고 내 쪽으로 당기기</b> (VR: 핀치·트리거를 누른 채 당기기 · PC: 롤을 <b>누른 채 아래로 드래그</b>)<br>
+  → 포장할 만큼 나오면 <b>지지직</b> 저절로 끊어져(오른쪽 → 왼쪽) 테이블에 놓이고 배스밤이 올라가요<br>
+  <b>② 🎁 포장하기</b> 버튼 (화면 아래 버튼 · 테이블 위 버튼 · 배스밤 클릭) — VR에선 두 손으로 감싸 모아도 돼요<br>
   <b>③ 리본 고르기</b>: 저절로 열린 상자의 리본을 고르면 선물에 붙어요<br>
   <kbd>R</kbd> = 처음부터 · 이펙트는 <a href="pattern-editor.html" style="padding:0;background:none;color:#ffd98a">편집기</a>에서 켜고 끄기</div>
   <div id="helpManual" style="display:none"><b>VR 손</b>: <b>주먹</b> = 종이 끝 잡기(펴면 놓기) · <b>가위 손</b>(검지·중지만 펴기)으로 종이에 대고 <b>가위질 3번</b> = 자르기 · 들고 손목을 돌려 놓으면 <b>뒷면이 위로</b><br>
@@ -43,7 +43,7 @@
   ④ <kbd>Space</kbd> = 왼손 놓기 — 자른 종이는 바닥으로, 안 자른 종이는 롤로 말려 들어감<br>
   <kbd>O</kbd> = 리본 상자 열기/닫기 · <kbd>B</kbd> = 배스밤 리셋 · <kbd>F</kbd> = 종이 뒤집기 (들고 있는 종이 / 마우스 아래 바닥 종이) · 왼손 고정 중 <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 상하좌우 · <kbd>Q</kbd>/<kbd>E</kbd> 앞/뒤 · <kbd>R</kbd> 리셋 · <kbd>X</kbd> 조각 지우기 · <kbd>Esc</kbd> 놓기</div></div>
   <div id="override">⚠ 패턴 편집기에서 적용한 설정을 사용 중 <button id="clearOverride">기본 설정으로</button></div>
-  <div class="row"><button id="restart">↺ 처음부터</button><button id="reset">롤 리셋</button><button id="clear">조각 지우기</button><button id="bomb">배스밤 리셋</button><button id="modeBtn"></button><a href="pattern-editor.html">편집기 →</a></div>
+  <div class="row"><button id="wrapBtn" style="background:#d6336c" disabled>🎁 포장하기</button><button id="restart">↺ 처음부터</button><button id="reset">롤 리셋</button><button id="clear">조각 지우기</button><button id="bomb">배스밤 리셋</button><button id="modeBtn"></button><a href="pattern-editor.html">편집기 →</a></div>
   <div id="status"></div>
 </div>
 
@@ -53,13 +53,13 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { WrappingPaperRack } from './src/wrapping-paper.js?v=15';
-import { GiftWrapStation } from './src/gift-wrap.js?v=15';
-import { RibbonBox } from './src/ribbon-box.js?v=15';
-import { Ribbons } from './src/ribbons.js?v=15';
-import { bindXRControllers, makeScissorsMarker, XR_SESSION_INIT } from './src/xr-input.js?v=15';
-import { Effects, mergeEffects } from './src/effects.js?v=15';
-import { AutoWrapFlow, bindSimpleInput, mergeFlow } from './src/wrap-flow.js?v=15';
+import { WrappingPaperRack } from './src/wrapping-paper.js?v=16';
+import { GiftWrapStation } from './src/gift-wrap.js?v=16';
+import { RibbonBox } from './src/ribbon-box.js?v=16';
+import { Ribbons } from './src/ribbons.js?v=16';
+import { bindXRControllers, makeScissorsMarker, XR_SESSION_INIT } from './src/xr-input.js?v=16';
+import { Effects, mergeEffects } from './src/effects.js?v=16';
+import { AutoWrapFlow, bindSimpleInput, mergeFlow } from './src/wrap-flow.js?v=16';
 
 const OVERRIDE_KEY = 'wrappingPaperConfig';
 
@@ -166,6 +166,9 @@ if (AUTO) {
 }
 const restart = () => { releaseLeft(); if (flow) flow.reset(); else { ribbons.reset(); station.reset(); rack.resetRolls(); rack.clearPieces(); ribbonBox.close(); } fx.clear(); wrapText = ''; };
 document.getElementById('restart').onclick = () => restart();
+const wrapBtnEl = document.getElementById('wrapBtn');
+wrapBtnEl.style.display = AUTO ? '' : 'none';
+wrapBtnEl.onclick = () => { fx.unlockAudio(); flow?.wrapNow(); };
 let snipText = '';
 rack.addEventListener('snip', (e) => { snipText = e.near ? `가위질 ${e.count}/${e.needed}` : '가위가 종이에서 멀어요'; setTimeout(() => (snipText = ''), 1500); });
 
@@ -282,13 +285,14 @@ renderer.setAnimationLoop(() => {
   simpleInput?.update(dt);
   rack.update(dt);
   flow?.update(dt);
+  if (flow) wrapBtnEl.disabled = !(flow.state === 'gather' && !flow.wrapping);
   fx.update(dt);
   if ((t += dt) > 0.2) {
     t = 0;
     const s = rack.getState();
     if (AUTO) {
-      status.textContent = `단계: ${({ pick: '① 포장지 고르기', dispense: '포장지 나오는 중', fly: '포장지 놓는 중', hop: '배스밤 올라가는 중', gather: '② 감싸 모으기', finishing: '착착…', celebrate: '🎉 포장 완성!', ribbon: '③ 리본 고르기', ribbonFly: '리본 다는 중', done: '🎁 선물 완성!' })[flow.state] || flow.state}` +
-        (flow.state === 'gather' ? `\n모은 정도: ${Math.round(flow.progress * 100)}%` : '');
+      status.textContent = `단계: ${({ pick: '① 포장지 당기기', pull: '당기는 중', tear: '지지직!', fly: '포장지 놓는 중', hop: '배스밤 올라가는 중', gather: '② 🎁 포장하기', finishing: '착착…', celebrate: '🎉 포장 완성!', ribbon: '③ 리본 고르기', ribbonFly: '리본 다는 중', done: '🎁 선물 완성!' })[flow.state] || flow.state}` +
+        (flow.state === 'pull' ? `\n당긴 길이: ${Math.round(flow.pullFrac * flow.cfg.pullLength * 100)} / ${Math.round(flow.cfg.pullLength * 100)} cm` : '');
     } else
     status.textContent = s.rolls.map((r, i) => `롤 ${i + 1}: 나온 길이 ${(r.pull * 100).toFixed(1)} cm`).join('\n') +
       `\n바닥의 조각: ${s.pieces.filter((p) => p.state === 'rest').length}개` +

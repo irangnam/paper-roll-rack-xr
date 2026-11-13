@@ -32,6 +32,7 @@ export const DEFAULT_EFFECTS = {
   hover: { enabled: true, color: '#ffd98a', intensity: 0.35 },
   select: { enabled: true, count: 16, color: '#fff3b0', size: 0.018, speed: 0.35, life: 0.6 },
   cut: { enabled: true, count: 28, color: '#ffffff', size: 0.016, speed: 0.4, life: 0.55 },
+  tear: { enabled: true, rate: 160, color: '#fffaf0', size: 0.012, speed: 0.18, life: 0.6 },
   land: { enabled: true, count: 18, color: '#f4efe6', size: 0.04, speed: 0.28, life: 0.75 },
   swap: { enabled: true, count: 30, color: '#ffe8f4', size: 0.02, speed: 0.3, life: 0.7 },
   gather: { enabled: true, rate: 45, color: '#ffd8f0', size: 0.014, life: 0.9, ring: true, ringColor: '#ffd166' },
@@ -341,10 +342,21 @@ class Sounds {
     const f = c.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = q;
     const g = this._out(gain); s.connect(f); f.connect(g); s.start(t0);
   }
-  play(name) {
+  play(name, dur = 0.5) {
     if (!this.ok) return;
     const t = this.ctx.currentTime + 0.01;
     switch (name) {
+      case 'tear': {                                   // 지지직: 짧은 종이 찢는 소리가 빠르게 이어짐
+        let k = 0;
+        while (k < dur) {
+          this._noise(t + k, 0.012 + Math.random() * 0.02, { freq: 1800 + Math.random() * 3800, q: 1.5 + Math.random() * 2, gain: 0.12 + Math.random() * 0.22 });
+          k += 0.008 + Math.random() * 0.022;
+        }
+        this._noise(t, dur + 0.05, { freq: 1200, q: 0.6, gain: 0.06 });
+        this._noise(t + dur - 0.02, 0.06, { freq: 3000, q: 1, gain: 0.3 });   // 마지막에 '착'
+        break;
+      }
+      case 'pull': this._tone(260 + Math.random() * 40, t, 0.03, { type: 'square', gain: 0.025 }); this._noise(t, 0.02, { freq: 2500, q: 3, gain: 0.05 }); break;
       case 'select': this._tone(880, t, 0.09, { f1: 1500, gain: 0.18 }); break;
       case 'cut': this._noise(t, 0.05, { freq: 5200, q: 2.5, gain: 0.35 }); this._noise(t + 0.07, 0.06, { freq: 4300, q: 2.5, gain: 0.3 }); this._tone(2400, t + 0.06, 0.08, { gain: 0.05 }); break;
       case 'whoosh': this._noise(t, 0.35, { freq: 900, q: 0.7, gain: 0.12 }); break;
@@ -401,7 +413,6 @@ export class Effects {
   setConfig(cfg) { this.cfg = cfg; }
   get on() { return this.cfg?.enabled !== false; }
   unlockAudio() { this.sound.unlock(); }
-  playSound(name) { if (this.on) this.sound.play(name); }
 
   _c(hex) { return new THREE.Color(hex); }
 
@@ -434,6 +445,22 @@ export class Effects {
       this.sound.play('land');
     }
   }
+
+  /** 종이가 찢어지는 앞머리에서 종이 부스러기·반짝임 (매 프레임) */
+  tear(pos, dt, dir = new THREE.Vector3(-1, 0, 0)) {
+    if (!this.on) return;
+    const c = this.cfg.tear; if (!c?.enabled) return;
+    this._tearAcc = (this._tearAcc || 0) + c.rate * dt;
+    while (this._tearAcc >= 1) {
+      this._tearAcc--;
+      const v = randDir(new THREE.Vector3(), 180).multiplyScalar(c.speed * rnd(0.3, 1)).addScaledVector(dir, c.speed * 0.5);
+      this.glow.spawn({ pos: pos.clone(), v, age: 0, life: c.life * rnd(0.5, 1.1), size0: c.size * rnd(0.5, 1.4), size1: 0, color: this._c(c.color),
+        shape: Math.random() < 0.25 ? 1 : 0, rot: rnd(0, 6), spin: rnd(-4, 4), drag: 3, gravity: 0.8 });
+      if (Math.random() < 0.35) this.puff.spawn({ pos: pos.clone(), v: v.clone().multiplyScalar(0.6), age: 0, life: c.life * 1.3, size0: c.size * 0.6, size1: c.size * 0.3,
+        color: this._c(c.color), shape: 0, rot: rnd(0, 6), spin: rnd(-6, 6), drag: 2, gravity: 1.2, alpha: 0.9, fadePow: 1.2 });
+    }
+  }
+  playSound(name, dur) { if (this.on) this.sound.play(name, dur); }
 
   /** 모으는 동안: 배스밤 둘레에서 반짝임이 피어오름 (progress 0~1 에 비례) */
   gather(pos, progress, dt, radius = 0.06) {

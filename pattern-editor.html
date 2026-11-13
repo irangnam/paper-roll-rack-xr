@@ -65,7 +65,7 @@
       <button id="reset">롤 리셋</button>
       <button id="clear">조각 지우기</button>
       <span style="width:12px"></span>
-      <button data-fx="select">✨ 선택</button><button data-fx="cut">✂ 자르기</button><button data-fx="land">💨 착지</button><button data-fx="gather">🤲 모으기</button>
+      <button data-fx="select">✨ 선택</button><button data-fx="tear">📃 지지직</button><button data-fx="land">💨 착지</button><button data-fx="gather">🤲 모으기</button>
       <button data-fx="complete" class="primary">🎉 포장 완성</button><button data-fx="ribbon" class="primary">🎀 선물 완성</button>
     </div>
     <div id="msg"></div>
@@ -107,9 +107,9 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { WrappingPaperRack, DEFAULT_CONFIG, mergeConfig } from './src/wrapping-paper.js?v=15';
-import { Effects, mergeEffects, DEFAULT_EFFECTS } from './src/effects.js?v=15';
-import { mergeFlow } from './src/wrap-flow.js?v=15';
+import { WrappingPaperRack, DEFAULT_CONFIG, mergeConfig } from './src/wrapping-paper.js?v=16';
+import { Effects, mergeEffects, DEFAULT_EFFECTS } from './src/effects.js?v=16';
+import { mergeFlow } from './src/wrap-flow.js?v=16';
 
 const OVERRIDE_KEY = 'wrappingPaperConfig';
 const fileConfig = await fetch('paper-config.json').then((r) => r.json()).catch(() => ({}));
@@ -155,13 +155,14 @@ addEventListener('resize', resize); resize();
 
 const anim = []; // { i, from, to, t }
 const FX_POS = new THREE.Vector3(0, 0.07, 0.32);   // 미리보기 위치: 랙 앞 바닥 위
-let gatherPreview = 0;
+let gatherPreview = 0, tearPreview = 0;
 let last = performance.now();
 renderer.setAnimationLoop(() => {
   const now = performance.now(), dt = (now - last) / 1000; last = now;
   for (const a of anim) { a.t = Math.min(1, a.t + dt / 1.2); rack.pullTo(a.i, a.from + (a.to - a.from) * (1 - (1 - a.t) ** 3)); }
   for (let k = anim.length - 1; k >= 0; k--) if (anim[k].t >= 1) anim.splice(k, 1);
   rack.update(dt);
+  if (tearPreview > 0) { tearPreview -= dt; fx.tear(new THREE.Vector3(0.18 - 0.36 * (1 - tearPreview / 0.55), 0.2, 0.25), dt); }
   if (gatherPreview > 0) { gatherPreview -= dt; fx.gather(FX_POS, Math.min(1, 1 - gatherPreview / 1.5), dt, 0.065); }
   fx.update(dt);
   renderer.render(scene, camera);
@@ -304,11 +305,14 @@ function toggle(parent, label, obj, key, onChange) {
 
 function renderFlow() {
   const g = $('flowCard'); g.innerHTML = ''; const f = config.flow;
-  field(g, '방식', { type: 'select', value: f.mode, options: [['auto', '단순 진행 (고르기 + 모으기, 자동)'], ['manual', '예전 방식 (직접 당기고 가위질)']], onInput: (v) => (f.mode = v) });
+  field(g, '방식', { type: 'select', value: f.mode, options: [['auto', '단순 진행 (당기면 저절로 끊김 + 포장하기 버튼)'], ['manual', '예전 방식 (직접 당기고 가위질)']], onInput: (v) => (f.mode = v) });
+  field(g, '당길 길이 (cm)', { min: 10, max: 60, step: 1, value: Math.round(f.pullLength * 100), onInput: (v) => (f.pullLength = v / 100) });
+  g.insertAdjacentHTML('beforeend', '<div class="hint">이만큼 당기면 저절로 지지직 끊어짐 (포장할 양)</div>');
+  field(g, '찢어지는 시간 (초)', { min: 0.15, max: 2, step: 0.05, value: f.tearTime, onInput: (v) => (f.tearTime = v) });
   field(g, '연출 속도', { min: 0.5, max: 2, step: 0.05, value: f.speed, onInput: (v) => (f.speed = v) });
-  g.insertAdjacentHTML('beforeend', '<div class="hint">종이가 풀리고 날아가고 배스밤이 뛰어오르는 속도 배율</div>');
-  field(g, '집고 있기 시간 (초)', { min: 0.3, max: 3, step: 0.1, value: f.holdTime, onInput: (v) => (f.holdTime = v) });
-  g.insertAdjacentHTML('beforeend', '<div class="hint">한 손으로 배스밤을 집고 있을 때(PC는 누르고 있을 때) 포장이 끝나기까지</div>');
+  g.insertAdjacentHTML('beforeend', '<div class="hint">찢어짐·날아가기·배스밤 뛰어오르기·감싸기 속도 배율</div>');
+  field(g, '포장 시간 (초)', { min: 0.3, max: 3, step: 0.1, value: f.wrapTime, onInput: (v) => (f.wrapTime = v) });
+  g.insertAdjacentHTML('beforeend', '<div class="hint">🎁 포장하기를 누른 뒤 감싸지기까지</div>');
   field(g, '두 손 시작 거리 (cm)', { min: 15, max: 60, step: 1, value: Math.round(f.twoHandStart * 100), onInput: (v) => (f.twoHandStart = v / 100) });
   field(g, '두 손 완성 거리 (cm)', { min: 4, max: 30, step: 1, value: Math.round(f.twoHandEnd * 100), onInput: (v) => (f.twoHandEnd = v / 100) });
   field(g, '톡 거리 (cm)', { min: 0.5, max: 6, step: 0.1, value: +(f.touchRadius * 100).toFixed(1), onInput: (v) => (f.touchRadius = v / 100) });
@@ -319,7 +323,8 @@ function renderFlow() {
 // 이펙트 항목 정의: [키, 제목, 설명, 미리보기]
 const FX_SIMPLE = [
   ['select', '✨ 선택', '롤·리본을 고를 때 반짝'],
-  ['cut', '✂ 자르기', '종이가 잘리는 선을 따라 반짝'],
+  ['tear', '📃 찢어질 때', '오른쪽 → 왼쪽 찢어지는 자리에서 부스러기'],
+  ['cut', '✂ 자르기 (예전 방식)', '잘리는 선을 따라 반짝'],
   ['land', '💨 착지', '종이·배스밤이 놓일 때 몽글 연기'],
   ['swap', '🔁 무늬 바꾸기', '모으기 전에 다른 롤을 고를 때'],
 ];
@@ -390,6 +395,7 @@ function preview(key) {
   fx.unlockAudio();
   const p = FX_POS.clone();
   if (key === 'select' || key === 'swap' || key === 'hover') fx.play(key === 'hover' ? 'select' : key, p);
+  else if (key === 'tear') { tearPreview = 0.55; fx.playSound('tear', 0.55); }
   else if (key === 'cut') fx.play('cut', p.clone().setY(0.2), { axis: new THREE.Vector3(1, 0, 0), width: 0.35 });
   else if (key === 'land') fx.play('land', p.clone().setY(0.01), { radius: 0.15 });
   else if (key === 'gather') { gatherPreview = 1.5; fx.playSound('tick'); }
