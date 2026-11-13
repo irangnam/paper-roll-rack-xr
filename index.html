@@ -31,6 +31,7 @@
   → 포장할 만큼 나오면 <b>지지직</b> 저절로 끊어져(오른쪽 → 왼쪽) 테이블에 놓이고 배스밤이 올라가요<br>
   <b>② 🎁 포장하기</b>: 아래 버튼 또는 배스밤 클릭 (VR: 배스밤을 톡 / 핀치 · 두 손으로 감싸 모으기)<br>
   <b>③ 리본 고르기</b>: 왼쪽 상자 안 리본을 고르면 선물에 붙어요<br>
+  💡 <b>램프</b>: 오른쪽 <b>당김 줄</b>을 클릭(VR: 핀치 · 톡)하면 딸깍 켜고 꺼요<br>
   다 끝나면 선물을 한 번 더 누르면 처음부터 · <kbd>R</kbd> = 처음부터</div>
   <div id="helpManual" style="display:none"><b>VR 손</b>: <b>주먹</b> = 종이 끝 잡기(펴면 놓기) · <b>가위 손</b>(검지·중지만 펴기)으로 종이에 대고 <b>가위질 3번</b> = 자르기 · 들고 손목을 돌려 놓으면 <b>뒷면이 위로</b><br>
   <b>VR 컨트롤러</b>: 그립 = 잡기 · 오른손 트리거 = 가위질 (3번에 잘림)<br>
@@ -53,13 +54,14 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { WrappingPaperRack } from './src/wrapping-paper.js?v=20';
-import { GiftWrapStation } from './src/gift-wrap.js?v=20';
-import { RibbonBox } from './src/ribbon-box.js?v=20';
-import { Ribbons } from './src/ribbons.js?v=20';
-import { bindXRControllers, makeScissorsMarker, XR_SESSION_INIT } from './src/xr-input.js?v=20';
-import { Effects, mergeEffects } from './src/effects.js?v=20';
-import { AutoWrapFlow, bindSimpleInput, mergeFlow } from './src/wrap-flow.js?v=20';
+import { WrappingPaperRack } from './src/wrapping-paper.js?v=22';
+import { GiftWrapStation } from './src/gift-wrap.js?v=22';
+import { RibbonBox } from './src/ribbon-box.js?v=22';
+import { Ribbons } from './src/ribbons.js?v=22';
+import { bindXRControllers, makeScissorsMarker, XR_SESSION_INIT } from './src/xr-input.js?v=22';
+import { Effects, mergeEffects } from './src/effects.js?v=22';
+import { AutoWrapFlow, bindSimpleInput, mergeFlow } from './src/wrap-flow.js?v=22';
+import { BankerLamp } from './src/lamp.js?v=22';
 
 const OVERRIDE_KEY = 'wrappingPaperConfig';
 
@@ -113,21 +115,7 @@ const gltfLoader = new GLTFLoader();
 const MODEL_V = 19;
 const [tableGltf, giftGltf, boxGltf, rib1Gltf, lampGltf] = await Promise.all(['models/WorkTable.glb', 'models/GiftWrap.glb', 'models/RibbonBox.glb', 'models/Ribbon_01.glb', 'models/BankerLamp.glb'].map((u) => gltfLoader.loadAsync(`${u}?v=${MODEL_V}`)));
 workspace.add(tableGltf.scene);
-// 램프 (블렌더 BankerLamp: 랙 오른쪽). 켜진 상태로 내보냄 → 전구 자리에 따뜻한 빛. lamp.setOn(false) 로 끄기
-const lamp = (() => {
-  const root = lampGltf.scene.getObjectByName('BankerLamp');
-  workspace.add(root);
-  const bulb = root.getObjectByName('Lamp_Bulb');
-  const light = new THREE.PointLight(0xffd29a, 0.35, 0.9, 2);
-  workspace.updateMatrixWorld(true);
-  const bc = new THREE.Box3().setFromObject(bulb).getCenter(new THREE.Vector3());
-  light.position.copy(root.worldToLocal(bc)); light.position.y -= 0.02;
-  root.add(light);
-  const glow = [];   // 켜고 끌 재질 (전구 · 갓 안쪽 · 오팔 갓)
-  root.traverse((o) => { if (o.isMesh && o.material.emissiveIntensity > 0 && o.material.emissive.getHex()) glow.push([o.material, o.material.emissiveIntensity]); });
-  let on = true;
-  return { root, light, get on() { return on; }, setOn(v) { on = !!v; light.visible = on; for (const [m, k] of glow) m.emissiveIntensity = on ? k : 0; } };
-})();
+// 램프는 아래 (이펙트 효과음이 준비된 뒤) 만듦
 // 안전장치: 포장지가 테이블보(가장 높은 곳)보다 아래면 그만큼 포장지·배스밤을 올림 → 테이블보에 가려지지 않음
 {
   const runner = tableGltf.scene.getObjectByName('TableRunner');
@@ -175,10 +163,14 @@ ribbons.addEventListener('attached', () => (wrapText = '🎀 리본을 달았어
 
 // ---------- 효과음 + 완성 순간 선물 통통 — 편집기에서 켜고 끄기
 const fx = new Effects(scene, config.effects);
+// 램프 (블렌더 BankerLamp: 랙 오른쪽, 켜진 상태). 오른쪽 당김 줄을 당기면 딸깍 켜고 끔
+const lamp = new BankerLamp(lampGltf.scene, { parent: workspace, fx });
+rack.addGrabbable(lamp);            // 예전 방식: 줄을 잡으면 딸깍 (rack.update 가 lamp.update 도 부름)
 
 let flow = null, simpleInput = null, xrInput = null;
 if (AUTO) {
   flow = new AutoWrapFlow({ rack, station, box: ribbonBox, ribbons, fx, workspace, cfg: config.flow, getViewer: () => camera });
+  flow.addTarget(() => lamp.target());   // 단순 진행: 줄 클릭 · 가리키고 핀치 · 손가락으로 톡
   simpleInput = bindSimpleInput({ renderer, scene, camera, controls, flow, fx });
 } else {
   xrInput = bindXRControllers(renderer, scene, rack);
@@ -230,7 +222,7 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
     if (rightTip.visible) { rack.snip(); e.preventDefault(); e.stopImmediatePropagation(); controls.enabled = false; setTimeout(() => (controls.enabled = true), 0); }
     return;
   }
-  const hit = hitPaper([...ribbons.getMeshes(), ...ribbonBox.getMeshes(), ...station.getMeshes(), ...rack.getSheetMeshes().filter((m) => m.visible), ...rack.getPieceMeshes()]);
+  const hit = hitPaper([lamp.hit, ...ribbons.getMeshes(), ...ribbonBox.getMeshes(), ...station.getMeshes(), ...rack.getSheetMeshes().filter((m) => m.visible), ...rack.getPieceMeshes()]);
   if (!hit) return;
   leftHand.position.copy(hit.point); leftHand.updateMatrixWorld();
   if (rack.grab(leftHand)) {

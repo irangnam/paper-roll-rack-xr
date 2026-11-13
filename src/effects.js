@@ -70,6 +70,10 @@ class Sounds {
       }
       case 'pull': this._tone(260 + Math.random() * 40, t, 0.03, { type: 'square', gain: 0.025 }); this._noise(t, 0.02, { freq: 2500, q: 3, gain: 0.05 }); break;
       case 'select': this._tone(880, t, 0.09, { f1: 1500, gain: 0.18 }); break;
+      case 'click':                                   // 램프 당김 줄: 딸깍
+        this._noise(t, 0.012, { freq: 4200, q: 3, gain: 0.35 }); this._tone(1800, t, 0.025, { type: 'square', gain: 0.03 });
+        this._noise(t + 0.09, 0.01, { freq: 3000, q: 3, gain: 0.2 });
+        break;
       case 'cut': this._noise(t, 0.05, { freq: 5200, q: 2.5, gain: 0.35 }); this._noise(t + 0.07, 0.06, { freq: 4300, q: 2.5, gain: 0.3 }); break;
       case 'whoosh': this._noise(t, 0.35, { freq: 900, q: 0.7, gain: 0.12 }); break;
       case 'land': this._tone(340, t, 0.14, { f1: 140, gain: 0.25 }); this._noise(t, 0.08, { freq: 700, q: 0.8, gain: 0.08, type: 'lowpass' }); break;

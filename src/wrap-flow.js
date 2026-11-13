@@ -51,6 +51,7 @@ export class AutoWrapFlow extends THREE.EventDispatcher {
     station.addEventListener('wrapped', () => this._onWrapped());
     ribbons.addEventListener('attached', () => this._onRibbon());
 
+    this.extra = [];           // 다른 모듈이 더하는 고를 대상 (예: 램프 줄) — () => target
     this.hovers = new Map();   // 입력 id -> target
     this.t = 0;
     this.reset();
@@ -85,10 +86,14 @@ export class AutoWrapFlow extends THREE.EventDispatcher {
     }
     // 다 끝나면 선물을 한 번 더 누르면(톡) 처음부터 — VR 에서 다시 하기
     if (s === 'done' && this.stateT > 1) T.push({ kind: 'restart', meshes: this._meshesOf(st.gift ?? st.ball), dist: (p) => p.distanceTo(st.ball.getWorldPosition(_w)) - st.R });
+    for (const f of this.extra) { const t = f(); if (t) T.push(t); }   // 램프 줄 등 (언제든)
     return T;
   }
   _meshesOf(o) { const a = []; o.traverse((m) => m.isMesh && a.push(m)); return a; }
   static same(a, b) { return a && b && a.kind === b.kind && a.i === b.i; }
+
+  /** 다른 모듈의 고를 대상 추가: fn() → { kind, meshes, dist(p), onPress() } (언제든 고를 수 있음) */
+  addTarget(fn) { this.extra.push(fn); }
 
   /** 입력 id 가 가리키는 대상 (강조 표시) */
   setHover(id, target) { if (target) this.hovers.set(id, target); else this.hovers.delete(id); }
@@ -98,6 +103,7 @@ export class AutoWrapFlow extends THREE.EventDispatcher {
     if (!target) return false;
     this.fx.unlockAudio();
     const k = target.kind;
+    if (target.onPress) return target.onPress() !== false;
     if (k === 'roll') return getPoint ? this._startPull(id, target.i, getPoint) : false;
     if (k === 'gift') return this.wrapNow();
     if (k === 'ribbon' && (this.state === 'ribbon' || this.state === 'done')) {
