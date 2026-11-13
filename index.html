@@ -110,9 +110,24 @@ workspace.position.set(0, H - TABLE_TOP, -0.55);
 scene.add(workspace);
 const gltfLoader = new GLTFLoader();
 // 모델 파일에도 버전을 붙여 브라우저에 남은 예전 GLB 를 쓰지 않게 (블렌더에서 다시 내보내면 MODEL_V 를 올림)
-const MODEL_V = 18;
-const [tableGltf, giftGltf, boxGltf, rib1Gltf] = await Promise.all(['models/WorkTable.glb', 'models/GiftWrap.glb', 'models/RibbonBox.glb', 'models/Ribbon_01.glb'].map((u) => gltfLoader.loadAsync(`${u}?v=${MODEL_V}`)));
+const MODEL_V = 19;
+const [tableGltf, giftGltf, boxGltf, rib1Gltf, lampGltf] = await Promise.all(['models/WorkTable.glb', 'models/GiftWrap.glb', 'models/RibbonBox.glb', 'models/Ribbon_01.glb', 'models/BankerLamp.glb'].map((u) => gltfLoader.loadAsync(`${u}?v=${MODEL_V}`)));
 workspace.add(tableGltf.scene);
+// 램프 (블렌더 BankerLamp: 랙 오른쪽). 켜진 상태로 내보냄 → 전구 자리에 따뜻한 빛. lamp.setOn(false) 로 끄기
+const lamp = (() => {
+  const root = lampGltf.scene.getObjectByName('BankerLamp');
+  workspace.add(root);
+  const bulb = root.getObjectByName('Lamp_Bulb');
+  const light = new THREE.PointLight(0xffd29a, 0.35, 0.9, 2);
+  workspace.updateMatrixWorld(true);
+  const bc = new THREE.Box3().setFromObject(bulb).getCenter(new THREE.Vector3());
+  light.position.copy(root.worldToLocal(bc)); light.position.y -= 0.02;
+  root.add(light);
+  const glow = [];   // 켜고 끌 재질 (전구 · 갓 안쪽 · 오팔 갓)
+  root.traverse((o) => { if (o.isMesh && o.material.emissiveIntensity > 0 && o.material.emissive.getHex()) glow.push([o.material, o.material.emissiveIntensity]); });
+  let on = true;
+  return { root, light, get on() { return on; }, setOn(v) { on = !!v; light.visible = on; for (const [m, k] of glow) m.emissiveIntensity = on ? k : 0; } };
+})();
 // 안전장치: 포장지가 테이블보(가장 높은 곳)보다 아래면 그만큼 포장지·배스밤을 올림 → 테이블보에 가려지지 않음
 {
   const runner = tableGltf.scene.getObjectByName('TableRunner');
@@ -310,7 +325,7 @@ renderer.setAnimationLoop(() => {
   }
   renderer.render(scene, camera);
 });
-window.app = { THREE, rack, scene, camera, renderer, leftHand, controls, xrInput, station, ribbonBox, ribbons, fx, flow, simpleInput, AUTO, get mode() { return mode; } };
+window.app = { THREE, rack, scene, camera, renderer, leftHand, controls, xrInput, station, ribbonBox, ribbons, fx, flow, simpleInput, lamp, AUTO, get mode() { return mode; } };
 </script>
 </body>
 </html>
