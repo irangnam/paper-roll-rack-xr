@@ -10,11 +10,12 @@
  *   // 이후 rack.grab / release / update 로 손·컨트롤러·마우스 모두 동작
  *
  * 흐름
- *   - 처음: 포장지 위에 배스밤이 놓인 상태 (블렌더 장면 그대로)
+ *   - 처음: 포장지는 없음(숨김). 배스밤만 랙 오른쪽 테이블 위에 놓여 있음
+ *   - 랙에서 종이를 당겨 잘라 테이블(또는 바닥)에 내려놓은 다음, 배스밤을 그 종이 위로 옮기면
+ *     그제서야 그 자리에 포장지가 나타나고(그 종이 무늬로, 40cm 정사각으로 재단) 접을 수 있게 됨
  *   - 꼭짓점(흰 점)을 잡아 배스밤 위로 들어 올리면 그 꼭짓점이 감싸며 올라옴. 충분히 올리고 놓으면 고정
  *   - 4개 다 접으면 차킨 모양으로 마무리 → 선물째로 들어 옮길 수 있음
- *   - 아직 안 접었으면 배스밤을 들어 옮길 수 있음. 랙에서 잘라 테이블에 놓은 종이 위에 놓으면
- *     그 종이 무늬로 포장지가 바뀌고(40cm 정사각으로 재단) 거기서 접을 수 있음
+ *   - 종이가 아직 없거나 접지 않았으면 배스밤을 자유롭게 들어 다른 종이 위로 옮길 수 있음
  * 이벤트: 'placed' | 'fold' | 'wrapped'
  */
 import * as THREE from 'three';
@@ -33,7 +34,12 @@ export class GiftWrapStation extends THREE.EventDispatcher {
     this.root.add(this.ball, this.paper);
     this.R = 0.045;
     this.tableY = this.paper.position.y;
-    this.home = { paper: this.paper.position.clone(), ball: this.ball.position.clone(), rotY: this.paper.rotation.y };
+    this.home = {
+      paper: this.paper.position.clone(),
+      // 배스밤의 처음 자리: 랙 오른쪽 (포장 자리는 블렌더 장면에서 가운데 — x만 오른쪽으로 옮김)
+      ball: new THREE.Vector3(opts.ballHomeX ?? 0.4, this.ball.position.y, this.ball.position.z),
+      rotY: this.paper.rotation.y,
+    };
     this.foldThreshold = opts.foldThreshold ?? 0.55;
 
     const dict = this.paperMesh.morphTargetDictionary;
@@ -89,11 +95,12 @@ export class GiftWrapStation extends THREE.EventDispatcher {
     if (this.heldBy) { const h = this.heldBy; this.heldBy = null; this.rack.release(h); }
     if (this.gift) { this.root.attach(this.paper); this.root.attach(this.ball); this.gift.removeFromParent(); this.gift = null; }
     this.paper.position.copy(this.home.paper); this.paper.rotation.set(0, this.home.rotY, 0);
+    this.paper.visible = false;   // 종이는 잘라서 배스밤을 올려놓기 전까지 없음
+    this.hasSheet = false;
     this.ball.position.copy(this.home.ball); this.ball.quaternion.identity();
-    this._setPattern(1);
     this.f = [0, 0, 0, 0]; this.target = [0, 0, 0, 0]; this.locked = [false, false, false, false];
     this.kWrap = 0; this.corner = -1; this.vel = 0;
-    this.state = 'onPaper';
+    this.state = 'free';   // 배스밤만 홀더 오른쪽에 놓인 상태 — 자유롭게 들어 옮길 수 있음
     this._applyMorph();
   }
 
@@ -206,19 +213,21 @@ export class GiftWrapStation extends THREE.EventDispatcher {
     this.corners.forEach((c, i) => { const h = this.hints[i]; h.visible = show && !this.locked[c.key]; if (h.visible) this._cornerPos(c, h.position); });
   }
 
-  ballOnSheet() { return Math.hypot(this.ball.position.x - this.paper.position.x, this.ball.position.z - this.paper.position.z) < 0.01; }
+  ballOnSheet() { return this.hasSheet && Math.hypot(this.ball.position.x - this.paper.position.x, this.ball.position.z - this.paper.position.z) < 0.01; }
   _overSheet() {
+    if (!this.hasSheet) return false;   // 종이가 아직 없으면 그 자리에 놓아도 포장 시작되지 않음
     const lp = this.paper.worldToLocal(this.root.localToWorld(_v.copy(this.ball.position)));
     return this._ballFree() && Math.abs(lp.x) < 0.2 && Math.abs(lp.z) < 0.2;
   }
 
-  /** 잘라서 테이블에 놓은 종이로 포장지 교체 (그 자리·방향·무늬로 / 40cm 정사각으로 재단) */
+  /** 잘라서 테이블에 놓은 종이로 포장지 교체 (그 자리·방향·무늬로 / 40cm 정사각으로 재단) — 이때 처음으로 종이가 나타남 */
   _moveSheetTo(pc) {
     if (!this._ballFree()) return;
     const c = this.root.worldToLocal(pc.mesh.getWorldPosition(new THREE.Vector3()));
     const ex = new THREE.Vector3(1, 0, 0).applyQuaternion(pc.mesh.getWorldQuaternion(new THREE.Quaternion()));
     this.paper.position.set(c.x, this.tableY, c.z);
     this.paper.rotation.set(0, -Math.atan2(ex.z, ex.x), 0);
+    this.paper.visible = true; this.hasSheet = true;
     this._setPattern(pc.roll);
     this.rack.takePiece(pc); pc.mesh.removeFromParent(); pc.mesh.geometry.dispose(); pc.mesh.material.dispose();
   }

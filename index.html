@@ -29,7 +29,7 @@
   <h1>🎁 포장지 롤 랙 데모</h1>
   <div><b>VR 손</b>: <b>주먹</b> = 종이 끝 잡기(펴면 놓기) · <b>가위 손</b>(검지·중지만 펴기)으로 종이에 대고 <b>가위질 3번</b> = 자르기 · 들고 손목을 돌려 놓으면 <b>뒷면이 위로</b><br>
   <b>VR 컨트롤러</b>: 그립 = 잡기 · 오른손 트리거 = 가위질 (3번에 잘림)<br>
-  <b>🎁 포장</b>: 테이블 앞 포장지의 꼭짓점(흰 점) 4개를 하나씩 잡아 배스밤 위로 들어 올렸다 놓기 · 배스밤을 잘라 놓은 종이 위로 옮기면 그 무늬로 포장<br>
+  <b>🎁 포장</b>(배스밤은 처음엔 랙 오른쪽에 그냥 놓여 있음): 롤에서 종이를 당겨 잘라 테이블에 내려놓고 → 배스밤을 그 종이 위로 옮기면 그 무늬로 포장지가 생김 → 꼭짓점(흰 점) 4개를 하나씩 잡아 배스밤 위로 들어 올렸다 놓기<br>
   <b>📦 리본 상자</b>(포장 자리 왼쪽): 뚜껑을 잡아 들어 올리면 열림 · 안의 <b>🎀 리본</b>을 꺼내 포장된 선물 목 근처에 놓으면 붙음</div>
   <div style="margin-top:6px"><b>PC</b> (왼손 잡기 + 오른손 가위)<br>
   ① 종이 아래 끝을 <b>마우스 드래그</b> = 왼손으로 잡고 당기기<br>
@@ -48,11 +48,11 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { WrappingPaperRack } from './src/wrapping-paper.js?v=13';
-import { GiftWrapStation } from './src/gift-wrap.js?v=13';
-import { RibbonBox } from './src/ribbon-box.js?v=13';
-import { Ribbons } from './src/ribbons.js?v=13';
-import { bindXRControllers, makeScissorsMarker, XR_SESSION_INIT } from './src/xr-input.js?v=13';
+import { WrappingPaperRack } from './src/wrapping-paper.js?v=14';
+import { GiftWrapStation } from './src/gift-wrap.js?v=14';
+import { RibbonBox } from './src/ribbon-box.js?v=14';
+import { Ribbons } from './src/ribbons.js?v=14';
+import { bindXRControllers, makeScissorsMarker, XR_SESSION_INIT } from './src/xr-input.js?v=14';
 
 const OVERRIDE_KEY = 'wrappingPaperConfig';
 
