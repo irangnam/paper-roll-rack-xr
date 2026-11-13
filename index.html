@@ -30,7 +30,7 @@
   <div><b>VR 손</b>: <b>주먹</b> = 종이 끝 잡기(펴면 놓기) · <b>가위 손</b>(검지·중지만 펴기)으로 종이에 대고 <b>가위질 3번</b> = 자르기 · 들고 손목을 돌려 놓으면 <b>뒷면이 위로</b><br>
   <b>VR 컨트롤러</b>: 그립 = 잡기 · 오른손 트리거 = 가위질 (3번에 잘림)<br>
   <b>🎁 포장</b>: 테이블 앞 포장지의 꼭짓점(흰 점) 4개를 하나씩 잡아 배스밤 위로 들어 올렸다 놓기 · 배스밤을 잘라 놓은 종이 위로 옮기면 그 무늬로 포장<br>
-  <b>📦 리본 상자</b>(포장 자리 왼쪽): 뚜껑을 잡아 들어 올리면 열림, 내리면 닫힘</div>
+  <b>📦 리본 상자</b>(포장 자리 왼쪽): 뚜껑을 잡아 들어 올리면 열림 · 안의 <b>🎀 리본</b>을 꺼내 포장된 선물 목 근처에 놓으면 붙음</div>
   <div style="margin-top:6px"><b>PC</b> (왼손 잡기 + 오른손 가위)<br>
   ① 종이 아래 끝을 <b>마우스 드래그</b> = 왼손으로 잡고 당기기<br>
   ② 드래그 중 <kbd>Space</kbd> = 왼손 고정 → 이제 마우스가 <b>가위</b><br>
@@ -48,10 +48,11 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { WrappingPaperRack } from './src/wrapping-paper.js?v=11';
-import { GiftWrapStation } from './src/gift-wrap.js?v=11';
-import { RibbonBox } from './src/ribbon-box.js?v=11';
-import { bindXRControllers, makeScissorsMarker, XR_SESSION_INIT } from './src/xr-input.js?v=11';
+import { WrappingPaperRack } from './src/wrapping-paper.js?v=12';
+import { GiftWrapStation } from './src/gift-wrap.js?v=12';
+import { RibbonBox } from './src/ribbon-box.js?v=12';
+import { Ribbons } from './src/ribbons.js?v=12';
+import { bindXRControllers, makeScissorsMarker, XR_SESSION_INIT } from './src/xr-input.js?v=12';
 
 const OVERRIDE_KEY = 'wrappingPaperConfig';
 
@@ -91,7 +92,7 @@ const workspace = new THREE.Group(); workspace.name = 'Workspace';
 workspace.position.set(0, H - TABLE_TOP, -0.55);
 scene.add(workspace);
 const gltfLoader = new GLTFLoader();
-const [tableGltf, giftGltf, boxGltf] = await Promise.all(['models/WorkTable.glb', 'models/GiftWrap.glb', 'models/RibbonBox.glb'].map((u) => gltfLoader.loadAsync(u)));
+const [tableGltf, giftGltf, boxGltf, rib1Gltf] = await Promise.all(['models/WorkTable.glb', 'models/GiftWrap.glb', 'models/RibbonBox.glb', 'models/Ribbon_01.glb'].map((u) => gltfLoader.loadAsync(u)));
 workspace.add(tableGltf.scene);
 
 const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.01, 50);
@@ -118,6 +119,11 @@ station.addEventListener('fold', (e) => (wrapText = `꼭짓점 접기 ${e.count}
 station.addEventListener('wrapped', () => (wrapText = '🎁 포장 완료! 선물을 들어 옮길 수 있어요'));
 // 리본 상자: 랙 왼쪽, 뚜껑을 잡아 들어 올리면 열림
 const ribbonBox = new RibbonBox(rack, boxGltf.scene, { parent: workspace });
+// 리본: 상자 안 칸에서 꺼내 포장된 선물의 목 근처에 놓으면 붙음 (블렌더 상자 기준 위치: Z-up → Y-up)
+const ribbons = new Ribbons(rack, ribbonBox, station, [
+  { scene: rib1Gltf.scene, slot: { pos: [-0.07, 0.034, 0.0], rot: [-Math.PI / 2, 0, -Math.PI] } },
+]);
+ribbons.addEventListener('attached', () => (wrapText = '🎀 리본을 달았어요!'));
 const xrInput = bindXRControllers(renderer, scene, rack);
 let snipText = '';
 rack.addEventListener('snip', (e) => { snipText = e.near ? `가위질 ${e.count}/${e.needed}` : '가위가 종이에서 멀어요'; setTimeout(() => (snipText = ''), 1500); });
@@ -157,7 +163,7 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
     if (rightTip.visible) { rack.snip(); e.preventDefault(); e.stopImmediatePropagation(); controls.enabled = false; setTimeout(() => (controls.enabled = true), 0); }
     return;
   }
-  const hit = hitPaper([...ribbonBox.getMeshes(), ...station.getMeshes(), ...rack.getSheetMeshes().filter((m) => m.visible), ...rack.getPieceMeshes()]);
+  const hit = hitPaper([...ribbons.getMeshes(), ...ribbonBox.getMeshes(), ...station.getMeshes(), ...rack.getSheetMeshes().filter((m) => m.visible), ...rack.getPieceMeshes()]);
   if (!hit) return;
   leftHand.position.copy(hit.point); leftHand.updateMatrixWorld();
   if (rack.grab(leftHand)) {
@@ -196,7 +202,7 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyR') { releaseLeft(); rack.resetRolls(); }
   if (e.code === 'KeyX') { releaseLeft(); rack.clearPieces(); }
   if (e.code === 'KeyO') ribbonBox.toggle();
-  if (e.code === 'KeyB') { releaseLeft(); station.reset(); wrapText = ''; }
+  if (e.code === 'KeyB') { releaseLeft(); ribbons.reset(); station.reset(); wrapText = ''; }
   if (e.code === 'Escape') releaseLeft();
   if (e.code === 'KeyF') {                                   // 뒤집기
     if (leftHolding) { flipTarget += Math.PI; }              // 들고 있는 종이: 왼손을 반 바퀴 돌림
@@ -220,7 +226,7 @@ function moveLeftHand(dt) {
 }
 document.getElementById('reset').onclick = () => { releaseLeft(); rack.resetRolls(); };
 document.getElementById('clear').onclick = () => { releaseLeft(); rack.clearPieces(); };
-document.getElementById('bomb').onclick = () => { releaseLeft(); station.reset(); wrapText = ''; };
+document.getElementById('bomb').onclick = () => { releaseLeft(); ribbons.reset(); station.reset(); wrapText = ''; };
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
 
 // ---------- loop
@@ -243,7 +249,7 @@ renderer.setAnimationLoop(() => {
   }
   renderer.render(scene, camera);
 });
-window.app = { THREE, rack, scene, camera, renderer, leftHand, controls, xrInput, station, ribbonBox, get mode() { return mode; } };
+window.app = { THREE, rack, scene, camera, renderer, leftHand, controls, xrInput, station, ribbonBox, ribbons, get mode() { return mode; } };
 </script>
 </body>
 </html>
