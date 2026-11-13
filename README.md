@@ -15,7 +15,7 @@
 | `paper-config.json` | 설정 파일 (데모·편집기가 읽음) |
 | `src/wrapping-paper.js` | **핵심 모듈** `WrappingPaperRack` (엔진 독립: 손/가위는 아무 Object3D) |
 | `src/xr-input.js` | WebXR 컨트롤러 연결 `bindXRControllers()` + 가위 끝 표식 |
-| `models/PaperRollRack.glb` | 블렌더에서 내보낸 랙 모델 (텍스처 WebP 내장, 5.2 MB) |
+| `models/PaperRollRack.glb` | 블렌더에서 내보낸 랙 모델 (텍스처 WebP 내장, 약 1.1 MB) |
 | `textures/*.jpg` | 포장지 무늬 이미지 3종 |
 | `lib/three/` | three.js r187 (오프라인 동작용 로컬 사본, MIT) |
 | `serve.command` | macOS 로컬 서버 실행 스크립트 |
