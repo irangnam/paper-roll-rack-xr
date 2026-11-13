@@ -104,9 +104,9 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { WrappingPaperRack, DEFAULT_CONFIG, mergeConfig } from './src/wrapping-paper.js?v=23';
-import { Effects, mergeEffects } from './src/effects.js?v=23';
-import { mergeFlow } from './src/wrap-flow.js?v=23';
+import { WrappingPaperRack, DEFAULT_CONFIG, mergeConfig } from './src/wrapping-paper.js?v=24';
+import { Effects, mergeEffects, SOUND_LABELS } from './src/effects.js?v=24';
+import { mergeFlow } from './src/wrap-flow.js?v=24';
 
 const OVERRIDE_KEY = 'wrappingPaperConfig';
 const fileConfig = await fetch('paper-config.json').then((r) => r.json()).catch(() => ({}));
@@ -311,6 +311,41 @@ function renderFlow() {
   field(g, '톡 거리 (cm)', { min: 0.5, max: 6, step: 0.1, value: +(f.touchRadius * 100).toFixed(1), onInput: (v) => (f.touchRadius = v / 100) });
 }
 
+// 효과음 한 줄: 이름 · 켜기 · ▶ / 음량 · 음 높이 / 파일 (올리기 · 경로 · 원래대로)
+function soundRow(k, label, play) {
+  const S = config.effects.sounds[k];
+  const box = document.createElement('div'); box.className = 'card'; box.style.margin = '8px 0'; box.style.padding = '6px 10px';
+  const head = document.createElement('div'); head.style.cssText = 'display:flex;align-items:center;gap:8px';
+  const sw = document.createElement('label'); sw.className = 'sw';
+  const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = S.enabled !== false;
+  cb.onchange = () => { S.enabled = cb.checked; box.classList.toggle('off', !cb.checked); };
+  sw.append(cb, document.createElement('span'));
+  const name = document.createElement('b'); name.textContent = label; name.style.flex = '1';
+  const src = document.createElement('span'); src.style.cssText = 'color:var(--mut);font-size:11px';
+  const pb = document.createElement('button'); pb.textContent = '▶'; pb.title = '듣기'; pb.onclick = () => play(k);
+  head.append(sw, name, src, pb); box.append(head);
+  field(box, '음량', { min: 0, max: 2, step: 0.05, value: S.volume, onInput: (v) => (S.volume = v) });
+  field(box, '음 높이', { min: 0.5, max: 2, step: 0.05, value: S.pitch, onInput: (v) => (S.pitch = v) });
+  const fr = document.createElement('div'); fr.className = 'row'; fr.style.alignItems = 'center';
+  const path = document.createElement('input'); path.type = 'text'; path.placeholder = '합성음 (기본) — 경로를 적으면 그 파일'; path.style.flex = '1'; path.style.minWidth = '0';
+  const showSrc = () => { path.value = S.file?.startsWith('data:') ? '' : (S.file || ''); path.placeholder = S.file?.startsWith('data:') ? `올린 파일: ${S.fileName || '소리'}` : '합성음 (기본) — 경로를 적으면 그 파일'; src.textContent = S.file ? '🎵 파일' : '합성음'; };
+  path.onchange = () => { S.file = path.value.trim(); S.fileName = ''; showSrc(); };
+  const up = document.createElement('button'); up.textContent = '파일 올리기';
+  const fi = document.createElement('input'); fi.type = 'file'; fi.accept = 'audio/*'; fi.hidden = true;
+  up.onclick = () => fi.click();
+  fi.onchange = async () => {
+    const f = fi.files[0]; if (!f) return;
+    if (f.size > 1.5e6) { msg('소리 파일이 너무 커요 (1.5 MB 이하로)'); return; }
+    S.file = await new Promise((res) => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(f); });
+    S.fileName = f.name; showSrc(); play(k); msg(`${label} → ${f.name}`);
+  };
+  const rs = document.createElement('button'); rs.textContent = '원래대로'; rs.title = '합성음 · 음량 1 · 음 높이 1';
+  rs.onclick = () => { Object.assign(S, { enabled: true, volume: 1, pitch: 1, file: '', fileName: '' }); box.replaceWith(soundRow(k, label, play)); };
+  fr.append(path, up, rs, fi); box.append(fr);
+  showSrc(); box.classList.toggle('off', S.enabled === false);
+  return box;
+}
+
 function renderFx() {
   const box = $('fxPanel'); box.innerHTML = ''; const E = config.effects;
   const c = document.createElement('div'); c.className = 'card';
@@ -319,11 +354,8 @@ function renderFx() {
   toggle(c, '전체 켜기', E, 'enabled');
   toggle(c, '효과음', E.sound, 'enabled');
   field(c, '음량', { min: 0, max: 1, step: 0.05, value: E.sound.volume, onInput: (v) => (E.sound.volume = v) });
-  const pr = document.createElement('div'); pr.className = 'row';
-  for (const [n, t] of [['pull', '당김'], ['tear', '지지직'], ['whoosh', '날아감'], ['hop', '폴짝'], ['land', '착지'], ['complete', '포장 완성'], ['ribbon', '리본 완성']]) {
-    const b = document.createElement('button'); b.textContent = '▶ ' + t; b.onclick = () => play(n); pr.append(b);
-  }
-  c.append(pr);
+  c.insertAdjacentHTML('beforeend', '<div class="hint" style="margin-left:0">효과음마다 켜기 · 음량 · 음 높이 · ▶ 듣기. <b>파일</b>로 내 소리(mp3·wav·ogg)로 바꾸거나 경로(예: sounds/tear.mp3)를 적을 수 있어요.</div>');
+  for (const [k, label] of Object.entries(SOUND_LABELS)) c.append(soundRow(k, label, play));
   c.insertAdjacentHTML('beforeend', '<h3 style="font-size:12px;color:#ffd98a;margin:14px 0 2px">👆 가리킬 때 빛남</h3>');
   toggle(c, '켜기', E.hover, 'enabled');
   field(c, '색', { type: 'color', value: E.hover.color, onInput: (v) => (E.hover.color = v) });

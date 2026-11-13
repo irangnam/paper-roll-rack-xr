@@ -13,6 +13,9 @@
 export const DEFAULT_EFFECTS = {
   enabled: true,
   sound: { enabled: true, volume: 0.6 },
+  // 효과음마다: 켜기 · 음량(배율) · 음 높이(배율) · file(소리 파일 경로나 data URL — 있으면 합성음 대신 이 파일을 재생)
+  sounds: Object.fromEntries(['pull', 'tear', 'whoosh', 'hop', 'land', 'tick', 'complete', 'ribbon', 'click', 'select', 'cut']
+    .map((k) => [k, { enabled: true, volume: 1, pitch: 1, file: '', fileName: '' }])),
   hover: { enabled: true, color: '#ffd98a', intensity: 0.35 },          // 가리킬 때 살짝 빛남
   complete: { enabled: true, bounce: { enabled: true, amount: 0.14 }, sound: { enabled: true } },
   ribbon: { enabled: true, bounce: { enabled: true, amount: 0.1 }, sound: { enabled: true } },
@@ -31,19 +34,27 @@ function deepMerge(base, user) {
 /** 저장된 설정 + 기본값 (빠진 항목은 기본값으로) */
 export function mergeEffects(user) { return deepMerge(DEFAULT_EFFECTS, user); }
 
+/** 효과음 이름 → 편집기에 보이는 이름 */
+export const SOUND_LABELS = {
+  pull: '종이 당길 때 (드르륵)', tear: '찢어질 때 (지지직)', whoosh: '날아갈 때 (휙)', hop: '배스밤 폴짝', land: '착지',
+  tick: '포장되는 중 (톡톡)', complete: '포장 완성', ribbon: '리본까지 완성', click: '램프 줄 (딸깍)', select: '고를 때', cut: '가위 자르기 (예전 방식)',
+};
+
 /* ------------------------------------------------------------------ 효과음 (WebAudio 합성 — 파일 필요 없음) */
 class Sounds {
-  constructor(cfg) { this.cfg = cfg; this.ctx = null; }
+  constructor(cfg, all) { this.cfg = cfg; this.all = all; this.ctx = null; this._v = 1; this._p = 1; this._buf = new Map(); }
   unlock() {
     if (!this.ctx) { try { this.ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch { return; } }
     if (this.ctx.state === 'suspended') this.ctx.resume();
   }
   get ok() { const s = this.cfg(); return s.enabled && this.ctx && this.ctx.state === 'running'; }
-  _out(gain) { const g = this.ctx.createGain(); g.gain.value = gain * this.cfg().volume; g.connect(this.ctx.destination); return g; }
+  get vol() { return this.cfg().volume * this._v; }
+  _out(gain) { const g = this.ctx.createGain(); g.gain.value = gain * this.vol; g.connect(this.ctx.destination); return g; }
   _tone(freq, t0, dur, { type = 'sine', gain = 0.3, f1 = null, attack = 0.005 } = {}) {
     const c = this.ctx, o = c.createOscillator(), g = this._out(1);
-    o.type = type; o.frequency.setValueAtTime(freq, t0); if (f1) o.frequency.exponentialRampToValueAtTime(f1, t0 + dur);
-    g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(gain * this.cfg().volume, t0 + attack);
+    const P = this._p;
+    o.type = type; o.frequency.setValueAtTime(freq * P, t0); if (f1) o.frequency.exponentialRampToValueAtTime(f1 * P, t0 + dur);
+    g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(Math.max(0.0002, gain * this.vol), t0 + attack);
     g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
     o.connect(g); o.start(t0); o.stop(t0 + dur + 0.05);
   }
@@ -51,11 +62,30 @@ class Sounds {
     const c = this.ctx, n = Math.ceil(c.sampleRate * dur), buf = c.createBuffer(1, n, c.sampleRate), d = buf.getChannelData(0);
     for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
     const s = c.createBufferSource(); s.buffer = buf;
-    const f = c.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = q;
+    const f = c.createBiquadFilter(); f.type = type; f.frequency.value = Math.min(20000, freq * this._p); f.Q.value = q;
     const g = this._out(gain); s.connect(f); f.connect(g); s.start(t0);
   }
+  /** 소리 파일 불러오기 (한 번만 디코드해서 기억) */
+  _load(url) {
+    if (!this._buf.has(url)) this._buf.set(url, fetch(url).then((r) => r.arrayBuffer()).then((a) => this.ctx.decodeAudioData(a)).catch((e) => { console.warn('효과음 파일을 못 읽음:', url, e); return null; }));
+    return this._buf.get(url);
+  }
+  async _playFile(url, vol, pitch) {
+    const buf = await this._load(url); if (!buf || !this.ok) return;
+    const s = this.ctx.createBufferSource(); s.buffer = buf; s.playbackRate.value = pitch;
+    const g = this.ctx.createGain(); g.gain.value = vol; s.connect(g); g.connect(this.ctx.destination); s.start();
+  }
+
   play(name, dur = 0.5) {
     if (!this.ok) return;
+    const sc = this.all()?.[name] ?? { enabled: true, volume: 1, pitch: 1, file: '' };
+    if (sc.enabled === false) return;
+    if (sc.file) { this._playFile(sc.file, this.cfg().volume * (sc.volume ?? 1), sc.pitch ?? 1); return; }   // 내 소리 파일
+    this._v = sc.volume ?? 1; this._p = sc.pitch ?? 1;
+    try { this._synth(name, dur); } finally { this._v = 1; this._p = 1; }
+  }
+
+  _synth(name, dur) {
     const t = this.ctx.currentTime + 0.01;
     switch (name) {
       case 'tear': {                                   // 지지직: 짧은 종이 찢는 소리가 빠르게 이어짐
@@ -93,7 +123,7 @@ class Sounds {
 }
 
 export class Effects {
-  constructor(scene, cfg) { this.cfg = cfg; this.sound = new Sounds(() => this.cfg.sound); }
+  constructor(scene, cfg) { this.cfg = cfg; this.sound = new Sounds(() => this.cfg.sound, () => this.cfg.sounds); }
   setConfig(cfg) { this.cfg = cfg; }
   get on() { return this.cfg?.enabled !== false; }
   unlockAudio() { this.sound.unlock(); }

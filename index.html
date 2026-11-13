@@ -54,14 +54,14 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { WrappingPaperRack } from './src/wrapping-paper.js?v=23';
-import { GiftWrapStation } from './src/gift-wrap.js?v=23';
-import { RibbonBox } from './src/ribbon-box.js?v=23';
-import { Ribbons } from './src/ribbons.js?v=23';
-import { bindXRControllers, makeScissorsMarker, XR_SESSION_INIT } from './src/xr-input.js?v=23';
-import { Effects, mergeEffects } from './src/effects.js?v=23';
-import { AutoWrapFlow, bindSimpleInput, mergeFlow } from './src/wrap-flow.js?v=23';
-import { BankerLamp } from './src/lamp.js?v=23';
+import { WrappingPaperRack } from './src/wrapping-paper.js?v=24';
+import { GiftWrapStation } from './src/gift-wrap.js?v=24';
+import { RibbonBox } from './src/ribbon-box.js?v=24';
+import { Ribbons } from './src/ribbons.js?v=24';
+import { bindXRControllers, makeScissorsMarker, XR_SESSION_INIT } from './src/xr-input.js?v=24';
+import { Effects, mergeEffects } from './src/effects.js?v=24';
+import { AutoWrapFlow, bindSimpleInput, mergeFlow } from './src/wrap-flow.js?v=24';
+import { BankerLamp } from './src/lamp.js?v=24';
 
 const OVERRIDE_KEY = 'wrappingPaperConfig';
 
@@ -93,7 +93,7 @@ renderer.setSize(innerWidth, innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.xr.enabled = true;
 renderer.shadowMap.enabled = true;                 // 램프 빛 그림자 (램프 스포트라이트만 그림자를 만듦)
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.xr.setReferenceSpaceType('local-floor');   // 실제 바닥 = y 0
 document.body.appendChild(renderer.domElement);
 document.body.appendChild(VRButton.createButton(renderer, XR_SESSION_INIT));   // 손 추적 요청
