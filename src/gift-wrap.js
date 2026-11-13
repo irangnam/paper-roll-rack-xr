@@ -85,11 +85,12 @@ export class GiftWrapStation extends THREE.EventDispatcher {
     return m;
   }
 
-  /** 포장지 무늬 = 랙 i번 롤의 무늬 (무늬 크기도 같게) */
+  /** 포장지 무늬·뒷면 색 = 랙 i번 롤과 같게 (무늬 크기도 같게) */
   _setPattern(i) {
     const r = this.rack.rolls[i]; if (!r) return;
     this.mat.map = r.texture; this.mat.needsUpdate = true;
     this.mat.userData.uniforms.uRep.value.set(0.40 / r.Tu, 0.40 / r.Tv);
+    this.mat.userData.uniforms.uBack.value.copy(r.back);   // 뒷면(위로 보이는 면) 색도 그 롤의 뒷면 색으로
   }
 
   reset() {
