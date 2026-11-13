@@ -168,13 +168,30 @@ export class AutoWrapFlow extends THREE.EventDispatcher {
     const d = this.drag, p = d.getPoint();
     if (p) {
       const w = _v.copy(d.end0).add(_w.copy(p).sub(d.p0));
-      w.y = Math.max(w.y, this._tableWorldY() + 0.012);          // 테이블 아래로는 못 들어감 → 테이블 위로 끌려 나옴
+      this._clearPath(d.i, w);
       this.proxy.position.copy(this.root.worldToLocal(w)); this.proxy.updateMatrixWorld();
     }
     const r = this.rack.rolls[d.i], got = r.pull - this.rack.restPull(d.i);
     this.pullFrac = Math.min(1, got / this.cfg.pullLength);
     if (r.pull - d.lastTick > 0.03) { d.lastTick = r.pull; this.fx.playSound('pull'); this._feedback(0.08); }
     if (got >= this.cfg.pullLength) this._startTear();
+  }
+
+  /** 당기는 점 w(월드)를 고쳐서, 롤에서 손까지 곧게 뻗은 종이가 랙 앞 아래 모서리와 테이블을 뚫지 않게 함.
+   *  손까지의 거리(당긴 길이)는 그대로 두고 방향만 앞쪽으로 들어 올림 */
+  _clearPath(i, w) {
+    const r = this.rack.rolls[i];
+    const lp = r.pivot.worldToLocal(w.clone());
+    const D = Math.max(Math.hypot(lp.y, lp.z), r.Rs + 1e-3);
+    let phi = Math.atan2(lp.z, -lp.y);                         // 0 = 바로 아래, + = 앞(나) 쪽
+    const tw = r.Rs / D;
+    phi = Math.max(phi, (r.tiltEdge ?? 0) + 0.03 + Math.asin(Math.min(1, tw)));   // 모서리 앞을 지나게
+    const tableY = r.pivot.worldToLocal(new THREE.Vector3(w.x, this._tableWorldY() + 0.012, w.z)).y;
+    if (D > -tableY) phi = Math.max(phi, Math.acos(THREE.MathUtils.clamp(-tableY / D, -1, 1)));   // 끝이 테이블 위에
+    phi = Math.min(phi, 2.3);
+    lp.y = -D * Math.cos(phi); lp.z = D * Math.sin(phi);
+    w.copy(r.pivot.localToWorld(lp));
+    return w;
   }
 
   _startTear() {
@@ -214,7 +231,23 @@ export class AutoWrapFlow extends THREE.EventDispatcher {
       A[j * 3 + 1] = topY + dx * Math.sin(a) + dy * Math.cos(a);
       A[j * 3 + 2] = u * u * curl * (0.4 + 0.6 * (topY - y) / T.L);
     }
-    P.needsUpdate = true; this.piece.mesh.geometry.computeVertexNormals();
+    // 처진 쪽이 테이블을 뚫지 않게: 테이블보 위에 닿으면 거기서 멈춰 눕는 것처럼
+    const m = this.piece.mesh, minY = this._tableWorldY() + 0.002, v = _w;
+    m.updateMatrixWorld(true);
+    for (let j = 0; j < P.count; j++) {
+      v.set(A[j * 3], A[j * 3 + 1], A[j * 3 + 2]).applyMatrix4(m.matrixWorld);
+      if (v.y < minY) { v.y = minY; m.worldToLocal(v); A[j * 3] = v.x; A[j * 3 + 1] = v.y; A[j * 3 + 2] = v.z; }
+    }
+    P.needsUpdate = true; m.geometry.computeVertexNormals();
+  }
+
+  /** 날아가는 조각의 가장 낮은 점이 테이블보 아래로 내려가면 그만큼 들어 올림 */
+  _keepAboveTable(m) {
+    const P = m.geometry.attributes.position, v = _w, minY = this._tableWorldY() + 0.002;
+    m.updateMatrixWorld(true);
+    let low = Infinity;
+    for (let j = 0; j < P.count; j++) low = Math.min(low, v.fromBufferAttribute(P, j).applyMatrix4(m.matrixWorld).y);
+    if (low < minY) { m.position.y += minY - low; m.updateMatrixWorld(true); }
   }
 
   _startFly() {
@@ -306,6 +339,7 @@ export class AutoWrapFlow extends THREE.EventDispatcher {
       m.quaternion.multiply(_q.setFromAxisAngle(_v.set(0, 1, 0), Math.sin(Math.PI * t) * 0.3 * (1 - t)));   // 살랑
       m.scale.lerpVectors(f.from.scale, f.to.scale, easeOut(Math.min(1, t * 1.4)));
       if (T) this._deformPiece(-T.s * T.W / 2, Math.max(0, 1 - t / 0.45));   // 처진 모양이 펴지며 날아감
+      this._keepAboveTable(m);
       if (!this.hop && t > 0.62) this._startHop();
       if (t >= 1) { this.fly = null; this.tear = null; this._placePaper(); this._set('hop'); }
     }
@@ -374,7 +408,7 @@ export class AutoWrapFlow extends THREE.EventDispatcher {
     sh.visible = P.visible;
     if (!sh.visible) return;
     const src = st.gift ?? P;
-    sh.position.set(src.position.x, st.tableY + 0.0012, src.position.z);
+    sh.position.set(src.position.x, st.tableY - 0.0003, src.position.z);   // 포장지 바로 아래, 테이블보 위
     sh.rotation.set(-Math.PI / 2, 0, st.gift ? 0 : st.home.rotY);
     const ws = st.gift ? 0.16 : PAPER * 1.47;              // 캔버스 가장자리 여백 보정
     sh.scale.set(ws, ws, 1);
