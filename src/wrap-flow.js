@@ -37,19 +37,6 @@ const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) 
 const easeOut = (t) => 1 - Math.pow(1 - t, 3);
 const _v = new THREE.Vector3(), _w = new THREE.Vector3(), _q = new THREE.Quaternion();
 
-/* ------------------------------------------------------------------ 바닥 그림자 (종이·선물 아래 부드러운 그림자) */
-function makeSoftShadow() {
-  const S = 256, c = document.createElement('canvas'); c.width = c.height = S;
-  const g = c.getContext('2d');
-  g.filter = 'blur(14px)'; g.fillStyle = 'rgba(40,25,10,0.9)';
-  g.beginPath(); g.roundRect(S * 0.16, S * 0.16, S * 0.68, S * 0.68, S * 0.04); g.fill();
-  const t = new THREE.CanvasTexture(c);
-  const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: t, transparent: true, depthWrite: false, opacity: 0.3, toneMapped: false,
-    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
-  m.rotation.x = -Math.PI / 2; m.renderOrder = 2; m.visible = false; m.name = 'PaperShadow';
-  return m;
-}
-
 export class AutoWrapFlow extends THREE.EventDispatcher {
   constructor({ rack, station, box, ribbons, fx, workspace, cfg, getViewer }) {
     super();
@@ -57,7 +44,6 @@ export class AutoWrapFlow extends THREE.EventDispatcher {
     station.auto = true;
     this.root = new THREE.Group(); this.root.name = 'AutoWrapFlow'; workspace.add(this.root);
 
-    this.shadow = makeSoftShadow(); this.root.add(this.shadow);   // 흰 종이가 크림색 테이블보 위에서도 보이게
     this.proxy = new THREE.Object3D(); this.proxy.name = 'PullHand'; this.root.add(this.proxy);   // 당기는 손 대신 (입력 위치를 따라감)
 
     this.ballMat = station.ball.material;
@@ -399,20 +385,7 @@ export class AutoWrapFlow extends THREE.EventDispatcher {
       if (b.t > 1.4) { st.gift.scale.setScalar(1); this.bounce = null; }
     }
 
-    this._updateShadow();
     this._updateHighlights();
-  }
-
-  _updateShadow() {
-    const st = this.station, P = st.paper, sh = this.shadow;
-    sh.visible = P.visible;
-    if (!sh.visible) return;
-    const src = st.gift ?? P;
-    sh.position.set(src.position.x, st.tableY - 0.0003, src.position.z);   // 포장지 바로 아래, 테이블보 위
-    sh.rotation.set(-Math.PI / 2, 0, st.gift ? 0 : st.home.rotY);
-    const ws = st.gift ? 0.16 : PAPER * 1.47;              // 캔버스 가장자리 여백 보정
-    sh.scale.set(ws, ws, 1);
-    sh.material.opacity = st.gift ? 0.45 : 0.3;
   }
 
   _updateHighlights() {
