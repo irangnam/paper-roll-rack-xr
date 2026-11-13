@@ -54,14 +54,14 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { WrappingPaperRack } from './src/wrapping-paper.js?v=22';
-import { GiftWrapStation } from './src/gift-wrap.js?v=22';
-import { RibbonBox } from './src/ribbon-box.js?v=22';
-import { Ribbons } from './src/ribbons.js?v=22';
-import { bindXRControllers, makeScissorsMarker, XR_SESSION_INIT } from './src/xr-input.js?v=22';
-import { Effects, mergeEffects } from './src/effects.js?v=22';
-import { AutoWrapFlow, bindSimpleInput, mergeFlow } from './src/wrap-flow.js?v=22';
-import { BankerLamp } from './src/lamp.js?v=22';
+import { WrappingPaperRack } from './src/wrapping-paper.js?v=23';
+import { GiftWrapStation } from './src/gift-wrap.js?v=23';
+import { RibbonBox } from './src/ribbon-box.js?v=23';
+import { Ribbons } from './src/ribbons.js?v=23';
+import { bindXRControllers, makeScissorsMarker, XR_SESSION_INIT } from './src/xr-input.js?v=23';
+import { Effects, mergeEffects } from './src/effects.js?v=23';
+import { AutoWrapFlow, bindSimpleInput, mergeFlow } from './src/wrap-flow.js?v=23';
+import { BankerLamp } from './src/lamp.js?v=23';
 
 const OVERRIDE_KEY = 'wrappingPaperConfig';
 
@@ -92,6 +92,8 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.xr.enabled = true;
+renderer.shadowMap.enabled = true;                 // 램프 빛 그림자 (램프 스포트라이트만 그림자를 만듦)
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.xr.setReferenceSpaceType('local-floor');   // 실제 바닥 = y 0
 document.body.appendChild(renderer.domElement);
 document.body.appendChild(VRButton.createButton(renderer, XR_SESSION_INIT));   // 손 추적 요청
@@ -166,6 +168,8 @@ const fx = new Effects(scene, config.effects);
 // 램프 (블렌더 BankerLamp: 랙 오른쪽, 켜진 상태). 오른쪽 당김 줄을 당기면 딸깍 켜고 끔
 const lamp = new BankerLamp(lampGltf.scene, { parent: workspace, fx });
 rack.addGrabbable(lamp);            // 예전 방식: 줄을 잡으면 딸깍 (rack.update 가 lamp.update 도 부름)
+// 램프 빛이 테이블·물건에 떨어지고 그림자가 지도록 (랙·상자·포장 물건은 가리고, 테이블·테이블보는 받음)
+workspace.traverse((o) => { if (o.isMesh) { o.receiveShadow = true; if (!/^Table_|TableRunner|^Lamp_/.test(o.name)) o.castShadow = true; } });
 
 let flow = null, simpleInput = null, xrInput = null;
 if (AUTO) {

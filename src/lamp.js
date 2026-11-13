@@ -29,12 +29,38 @@ export class BankerLamp extends THREE.EventDispatcher {
     this.glow = [];
     this.root.traverse((o) => { if (o.isMesh && o.material.emissive && o.material.emissiveIntensity > 0 && o.material.emissive.getHex()) this.glow.push([o.material, o.material.emissiveIntensity]); });
 
-    // 전구 자리 따뜻한 빛
+    // 전구 자리 빛: 아래를 비추는 스포트라이트(그림자 — 갓이 가려서 아래로만 둥글게 비춤) + 갓 안을 밝히는 약한 점광원
     const bulb = this.root.getObjectByName('Lamp_Bulb');
-    this.light = new THREE.PointLight(0xffd29a, opts.lightIntensity ?? 0.35, 0.9, 2);
-    const bc = new THREE.Box3().setFromObject(bulb).getCenter(new THREE.Vector3());
-    this.light.position.copy(this.root.worldToLocal(bc)); this.light.position.y -= 0.02;
+    const bc = this.root.worldToLocal(new THREE.Box3().setFromObject(bulb).getCenter(new THREE.Vector3()));
+    this.spot = new THREE.SpotLight(0xffc98a, opts.spotIntensity ?? 7, 1.6, THREE.MathUtils.degToRad(62), 0.75, 2);
+    this.spot.position.copy(bc).add(new THREE.Vector3(0, -0.03, 0));
+    this.spot.target.position.copy(bc).add(new THREE.Vector3(0, -1, -0.4));    // 아래 + 앞(포장 자리) 쪽으로
+    this.spot.castShadow = true;
+    this.spot.shadow.mapSize.set(1024, 1024);
+    this.spot.shadow.camera.near = 0.01; this.spot.shadow.camera.far = 1.6;
+    this.spot.shadow.bias = -0.0004; this.spot.shadow.normalBias = 0.004; this.spot.shadow.radius = 4;
+    this.root.add(this.spot, this.spot.target);
+    this.light = new THREE.PointLight(0xffd8a8, opts.glowIntensity ?? 0.05, 0.35, 2);   // 갓 안쪽·전구 주변
+    this.light.position.copy(bc).add(new THREE.Vector3(0, -0.015, 0));
     this.root.add(this.light);
+    // 그림자: 갓·받침·목 등은 빛을 가림. 전구·소켓·갓 안쪽은 빛 안에 있으니 가리지 않음
+    this.root.traverse((o) => { if (o.isMesh) { o.castShadow = !/Bulb|Socket|ShadeInner|Hit/.test(o.name); o.receiveShadow = true; } });
+
+    // 오팔 갓: 전구에 가까운 아래 가장자리일수록 밝게, 위로 갈수록 은은하게 (통째로 하얗게 빛나지 않게)
+    const shade = this.root.getObjectByName('Lamp_Shade');
+    const sm = (shade?.isMesh ? shade : shade?.getObjectByProperty('isMesh', true));
+    if (sm) {
+      sm.geometry.computeBoundingBox();
+      const bb = sm.geometry.boundingBox, u = { uLip: { value: bb.min.y }, uTop: { value: bb.max.y } };
+      sm.material.onBeforeCompile = (sh) => {
+        Object.assign(sh.uniforms, u);
+        sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying float vH;')
+          .replace('#include <begin_vertex>', '#include <begin_vertex>\nvH = position.y;');
+        sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying float vH; uniform float uLip; uniform float uTop;')
+          .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n{ float h = clamp((vH - uLip) / (uTop - uLip), 0.0, 1.0); totalEmissiveRadiance *= mix(1.6, 0.25, smoothstep(0.0, 0.9, h)); }');
+      };
+      sm.material.needsUpdate = true;
+    }
 
     // 줄은 가늘어서 잡기 쉽게 보이지 않는 굵은 원통을 덧댐 (레이캐스트·터치용)
     const box = new THREE.Box3().setFromObject(this.chain);
@@ -50,7 +76,7 @@ export class BankerLamp extends THREE.EventDispatcher {
 
   setOn(v) {
     this.on = !!v;
-    this.light.visible = this.on;
+    this.light.visible = this.spot.visible = this.on;
     for (const [m, k] of this.glow) m.emissiveIntensity = this.on ? k : 0;
   }
 
