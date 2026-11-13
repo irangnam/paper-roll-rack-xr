@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <link rel="icon" href="data:,">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>포장지 패턴 편집기</title>
+<title>포장지 · 이펙트 편집기</title>
 <style>
   :root { --bg:#16181d; --panel:#1f232a; --line:#2e333c; --text:#e9ecef; --mut:#9aa3ad; --acc:#e8590c; }
   * { box-sizing: border-box; }
@@ -33,6 +33,21 @@
   .row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
   #msg { position: absolute; right: 12px; bottom: 12px; background: rgba(0,0,0,.7); padding: 6px 10px; border-radius: 8px; opacity: 0; transition: opacity .3s; }
   #msg.on { opacity: 1; }
+  details.fx { border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px; background: #1a1d23; }
+  details.fx > summary { cursor: pointer; padding: 8px 12px; display: flex; align-items: center; gap: 8px; list-style: none; }
+  details.fx > summary::-webkit-details-marker { display: none; }
+  details.fx > summary .t { font-weight: 600; flex: 1; }
+  details.fx > summary .d { color: var(--mut); font-size: 11px; }
+  details.fx .body { padding: 2px 12px 10px; }
+  details.fx h3 { font-size: 12px; color: #ffd98a; margin: 10px 0 2px; display: flex; gap: 8px; align-items: center; }
+  .sw { position: relative; width: 34px; height: 20px; flex: none; }
+  .sw input { opacity: 0; width: 0; height: 0; }
+  .sw span { position: absolute; inset: 0; background: #3a3f48; border-radius: 20px; transition: .2s; cursor: pointer; }
+  .sw span::before { content: ''; position: absolute; width: 14px; height: 14px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: .2s; }
+  .sw input:checked + span { background: var(--acc); } .sw input:checked + span::before { transform: translateX(14px); }
+  .off { opacity: .45; }
+  .cols { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; margin: 4px 0 4px 120px; }
+  .cols input { height: 24px; }
 </style>
 <script type="importmap">
 { "imports": {
@@ -49,6 +64,9 @@
       <button id="cutTest">자르기 테스트</button>
       <button id="reset">롤 리셋</button>
       <button id="clear">조각 지우기</button>
+      <span style="width:12px"></span>
+      <button data-fx="select">✨ 선택</button><button data-fx="cut">✂ 자르기</button><button data-fx="land">💨 착지</button><button data-fx="gather">🤲 모으기</button>
+      <button data-fx="complete" class="primary">🎉 포장 완성</button><button data-fx="ribbon" class="primary">🎀 선물 완성</button>
     </div>
     <div id="msg"></div>
   </div>
@@ -57,7 +75,13 @@
     <div class="sub">롤마다 이미지와 무늬 크기를 바꾸고, <b>paper-config.json</b> 으로 저장하거나 데모에 바로 적용해요.</div>
     <div id="rolls"></div>
 
-    <h2>자른 종이 · 인터랙션</h2>
+    <h2>진행 방식</h2>
+    <div class="card" id="flowCard"></div>
+
+    <h2>✨ 이펙트 <span style="font-weight:400">— 아래 버튼(왼쪽 화면)으로 미리보기</span></h2>
+    <div id="fxPanel"></div>
+
+    <h2>자른 종이 · 인터랙션 (예전 방식)</h2>
     <div class="card" id="global"></div>
 
     <h2>저장</h2>
@@ -83,11 +107,15 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { WrappingPaperRack, DEFAULT_CONFIG, mergeConfig } from './src/wrapping-paper.js?v=14';
+import { WrappingPaperRack, DEFAULT_CONFIG, mergeConfig } from './src/wrapping-paper.js?v=15';
+import { Effects, mergeEffects, DEFAULT_EFFECTS } from './src/effects.js?v=15';
+import { mergeFlow } from './src/wrap-flow.js?v=15';
 
 const OVERRIDE_KEY = 'wrappingPaperConfig';
 const fileConfig = await fetch('paper-config.json').then((r) => r.json()).catch(() => ({}));
 let config = mergeConfig(JSON.parse(localStorage.getItem(OVERRIDE_KEY) || 'null') || fileConfig);
+const fixConfig = () => { config.effects = mergeEffects(config.effects); config.flow = mergeFlow(config.flow); };
+fixConfig();
 const previews = {};   // roll index -> { dataUrl, fileName }  (새로 넣은 이미지)
 
 // ---------- 3D preview
@@ -111,9 +139,13 @@ async function buildRack() {
   rack = new WrappingPaperRack(config, { renderer });
   await rack.load();
   scene.add(rack.root);
+  rack.config.effects = config.effects; rack.config.flow = config.flow;
   config = rack.config;
+  fx?.setConfig(config.effects);
 }
+let fx = null;
 await buildRack();
+fx = new Effects(scene, config.effects, { getViewer: () => camera, groundAt: () => 0 });
 
 function resize() {
   const w = view.clientWidth, h = view.clientHeight;
@@ -122,12 +154,16 @@ function resize() {
 addEventListener('resize', resize); resize();
 
 const anim = []; // { i, from, to, t }
+const FX_POS = new THREE.Vector3(0, 0.07, 0.32);   // 미리보기 위치: 랙 앞 바닥 위
+let gatherPreview = 0;
 let last = performance.now();
 renderer.setAnimationLoop(() => {
   const now = performance.now(), dt = (now - last) / 1000; last = now;
   for (const a of anim) { a.t = Math.min(1, a.t + dt / 1.2); rack.pullTo(a.i, a.from + (a.to - a.from) * (1 - (1 - a.t) ** 3)); }
   for (let k = anim.length - 1; k >= 0; k--) if (anim[k].t >= 1) anim.splice(k, 1);
   rack.update(dt);
+  if (gatherPreview > 0) { gatherPreview -= dt; fx.gather(FX_POS, Math.min(1, 1 - gatherPreview / 1.5), dt, 0.065); }
+  fx.update(dt);
   renderer.render(scene, camera);
 });
 
@@ -219,7 +255,7 @@ function toDataUrl(file, maxSide) {
 
 /** forStorage: 'demo' = 새 이미지는 data URL 로 / 'file' = 체크박스에 따라 경로 또는 data URL */
 function exportConfig(forStorage) {
-  const out = structuredClone({ model: config.model, surfaceY: config.surfaceY, rolls: config.rolls, interaction: config.interaction });
+  const out = structuredClone({ model: config.model, surfaceY: config.surfaceY, rolls: config.rolls, interaction: config.interaction, flow: config.flow, effects: config.effects });
   out.rolls.forEach((rc, i) => {
     const r = rack.rolls[i];
     rc.tileWidth = +r.Tu.toFixed(4); rc.paperWidth = +r.width.toFixed(4); rc.offsetU = +r.offU.toFixed(3);
@@ -243,21 +279,127 @@ $('download').onclick = () => {
 $('load').onclick = () => $('loadFile').click();
 $('loadFile').onchange = async (e) => {
   const f = e.target.files[0]; if (!f) return;
-  config = mergeConfig(JSON.parse(await f.text())); for (const k in previews) delete previews[k];
-  await buildRack(); renderRolls(); renderGlobal(); msg(`${f.name} 불러옴`);
+  config = mergeConfig(JSON.parse(await f.text())); fixConfig(); for (const k in previews) delete previews[k];
+  await buildRack(); renderAll(); msg(`${f.name} 불러옴`);
 };
 $('defaults').onclick = async () => {
   localStorage.removeItem(OVERRIDE_KEY);
-  config = mergeConfig(Object.keys(fileConfig).length ? fileConfig : DEFAULT_CONFIG); for (const k in previews) delete previews[k];
-  await buildRack(); renderRolls(); renderGlobal(); msg('paper-config.json 기본값으로 되돌렸어요');
+  config = mergeConfig(Object.keys(fileConfig).length ? fileConfig : DEFAULT_CONFIG); fixConfig(); for (const k in previews) delete previews[k];
+  await buildRack(); renderAll(); msg('paper-config.json 기본값으로 되돌렸어요');
 };
 $('pullAll').onclick = () => rack.rolls.forEach((r, i) => anim.push({ i, from: r.pull, to: r.pull + 0.3, t: 0 }));
 $('cutTest').onclick = () => { rack.rolls.forEach((r, i) => { if (r.pull > r.cutDist + 0.05) rack.cut(i, r.cutDist + 0.01); }); };
 $('reset').onclick = () => rack.resetRolls();
 $('clear').onclick = () => rack.clearPieces();
 
-renderRolls(); renderGlobal();
-window.editor = { rack: () => rack, exportConfig, THREE };
+// ---------- 진행 방식 · 이펙트 UI
+function toggle(parent, label, obj, key, onChange) {
+  const l = document.createElement('label'); l.className = 'f';
+  const s = document.createElement('span'); s.textContent = label;
+  const w = document.createElement('label'); w.className = 'sw';
+  const c = document.createElement('input'); c.type = 'checkbox'; c.checked = !!obj[key];
+  c.onchange = () => { obj[key] = c.checked; onChange?.(c.checked); };
+  w.append(c, document.createElement('span')); l.append(s, w); parent.append(l); return c;
+}
+
+function renderFlow() {
+  const g = $('flowCard'); g.innerHTML = ''; const f = config.flow;
+  field(g, '방식', { type: 'select', value: f.mode, options: [['auto', '단순 진행 (고르기 + 모으기, 자동)'], ['manual', '예전 방식 (직접 당기고 가위질)']], onInput: (v) => (f.mode = v) });
+  field(g, '연출 속도', { min: 0.5, max: 2, step: 0.05, value: f.speed, onInput: (v) => (f.speed = v) });
+  g.insertAdjacentHTML('beforeend', '<div class="hint">종이가 풀리고 날아가고 배스밤이 뛰어오르는 속도 배율</div>');
+  field(g, '집고 있기 시간 (초)', { min: 0.3, max: 3, step: 0.1, value: f.holdTime, onInput: (v) => (f.holdTime = v) });
+  g.insertAdjacentHTML('beforeend', '<div class="hint">한 손으로 배스밤을 집고 있을 때(PC는 누르고 있을 때) 포장이 끝나기까지</div>');
+  field(g, '두 손 시작 거리 (cm)', { min: 15, max: 60, step: 1, value: Math.round(f.twoHandStart * 100), onInput: (v) => (f.twoHandStart = v / 100) });
+  field(g, '두 손 완성 거리 (cm)', { min: 4, max: 30, step: 1, value: Math.round(f.twoHandEnd * 100), onInput: (v) => (f.twoHandEnd = v / 100) });
+  field(g, '톡 거리 (cm)', { min: 0.5, max: 6, step: 0.1, value: +(f.touchRadius * 100).toFixed(1), onInput: (v) => (f.touchRadius = v / 100) });
+  toggle(g, '공중 안내 문구', f, 'guideText');
+  toggle(g, '리본 상자 자동 열기', f, 'boxAutoOpen');
+}
+
+// 이펙트 항목 정의: [키, 제목, 설명, 미리보기]
+const FX_SIMPLE = [
+  ['select', '✨ 선택', '롤·리본을 고를 때 반짝'],
+  ['cut', '✂ 자르기', '종이가 잘리는 선을 따라 반짝'],
+  ['land', '💨 착지', '종이·배스밤이 놓일 때 몽글 연기'],
+  ['swap', '🔁 무늬 바꾸기', '모으기 전에 다른 롤을 고를 때'],
+];
+const PARAMS = {
+  count: ['개수', 1, 400, 1, ''], size: ['크기 (cm)', 0.2, 20, 0.1, 'cm'], speed: ['속도 (m/s)', 0, 4, 0.05], life: ['지속 시간 (초)', 0.1, 5, 0.05],
+  rate: ['초당 개수', 1, 200, 1], spread: ['퍼짐 각도 (°)', 5, 180, 1], gravity: ['중력', 0, 10, 0.1], drag: ['공기 저항', 0, 6, 0.1],
+  radius: ['반지름 (cm)', 2, 100, 1, 'cm'], amount: ['통통 정도', 0, 0.4, 0.01], height: ['높이 (cm)', 0, 60, 1, 'cm'], intensity: ['밝기', 0, 1.5, 0.05],
+};
+function paramFields(parent, obj) {
+  for (const [k, v] of Object.entries(obj)) {
+    if (k === 'enabled') continue;
+    if (typeof v === 'string' && /^#/.test(v)) { field(parent, ({ color: '색', outline: '글자 테두리 색', ringColor: '진행 고리 색' })[k] || k, { type: 'color', value: v, onInput: (c) => (obj[k] = c) }); continue; }
+    if (k === 'label') { const l = document.createElement('label'); l.className = 'f'; l.innerHTML = '<span>문구</span>'; const t = document.createElement('input'); t.type = 'text'; t.value = v; t.style.gridColumn = 'span 2'; t.oninput = () => (obj.label = t.value); l.append(t); parent.append(l); continue; }
+    if (typeof v === 'boolean') { toggle(parent, ({ ring: '진행 고리 표시' })[k] || k, obj, k); continue; }
+    if (k === 'colors') {
+      const l = document.createElement('div'); l.innerHTML = '<span style="color:var(--mut)">색종이 색 (6개)</span>'; l.style.marginTop = '5px';
+      const row = document.createElement('div'); row.className = 'cols';
+      for (let i = 0; i < 6; i++) { const c = document.createElement('input'); c.type = 'color'; c.value = v[i] || '#ffffff'; c.oninput = () => { v[i] = c.value; }; row.append(c); }
+      parent.append(l, row); continue;
+    }
+    const P = PARAMS[k]; if (!P || typeof v !== 'number') continue;
+    const cm = P[4] === 'cm';
+    field(parent, P[0], { min: P[1], max: P[2], step: P[3], value: cm ? +(v * 100).toFixed(2) : v, onInput: (x) => (obj[k] = cm ? x / 100 : x) });
+  }
+}
+function fxSection(box, key, title, desc, build) {
+  const d = document.createElement('details'); d.className = 'fx';
+  const sm = document.createElement('summary');
+  const sw = document.createElement('label'); sw.className = 'sw'; sw.onclick = (e) => e.stopPropagation();
+  const c = document.createElement('input'); c.type = 'checkbox'; c.checked = config.effects[key].enabled !== false;
+  c.onchange = () => { config.effects[key].enabled = c.checked; d.classList.toggle('off', !c.checked); };
+  sw.append(c, document.createElement('span'));
+  sm.innerHTML = `<span class="t">${title}</span><span class="d">${desc}</span>`; sm.prepend(sw);
+  const pv = document.createElement('button'); pv.textContent = '▶'; pv.title = '미리보기'; pv.onclick = (e) => { e.preventDefault(); preview(key); }; sm.append(pv);
+  const body = document.createElement('div'); body.className = 'body'; build(body);
+  d.append(sm, body); d.classList.toggle('off', !c.checked); box.append(d);
+}
+function renderFx() {
+  const box = $('fxPanel'); box.innerHTML = ''; const E = config.effects;
+  const top = document.createElement('div'); top.className = 'card';
+  toggle(top, '이펙트 전체', E, 'enabled', (v) => box.querySelectorAll('details.fx').forEach((d) => d.style.opacity = v ? '' : 0.4));
+  toggle(top, '효과음', E.sound, 'enabled');
+  field(top, '음량', { min: 0, max: 1, step: 0.05, value: E.sound.volume, onInput: (v) => (E.sound.volume = v) });
+  box.append(top);
+  fxSection(box, 'hover', '👆 가리킬 때 빛남', '롤·리본·배스밤 강조', (b) => paramFields(b, E.hover));
+  for (const [k, t, d] of FX_SIMPLE) fxSection(box, k, t, d, (b) => paramFields(b, E[k]));
+  fxSection(box, 'gather', '🤲 모으기', '감싸는 동안 반짝 + 진행 고리', (b) => paramFields(b, E.gather));
+  for (const [k, t, d] of [['complete', '🎉 포장 완성', '감싸기가 끝났을 때'], ['ribbon', '🎀 선물 완성', '리본까지 달았을 때']]) {
+    fxSection(box, k, t, d, (b) => {
+      const C = E[k];
+      for (const [sub, name] of [['text', '완성 문구'], ['confetti', '색종이'], ['stars', '별'], ['sparkle', '피어오르는 반짝임'], ['ring', '퍼지는 빛 고리'], ['flash', '번쩍임'], ['bounce', '선물 통통'], ['sound', '효과음']]) {
+        const h = document.createElement('h3'); const sw = document.createElement('label'); sw.className = 'sw';
+        const c = document.createElement('input'); c.type = 'checkbox'; c.checked = C[sub].enabled !== false;
+        const g = document.createElement('div');
+        c.onchange = () => { C[sub].enabled = c.checked; g.classList.toggle('off', !c.checked); };
+        sw.append(c, document.createElement('span')); h.append(sw, name); b.append(h);
+        paramFields(g, C[sub]); g.classList.toggle('off', !c.checked); b.append(g);
+      }
+    });
+  }
+  const r = document.createElement('div'); r.className = 'row';
+  const rb = document.createElement('button'); rb.textContent = '이펙트만 기본값으로';
+  rb.onclick = () => { config.effects = rack.config.effects = mergeEffects({}); fx.setConfig(config.effects); renderFx(); msg('이펙트 설정을 기본값으로'); };
+  r.append(rb); box.append(r);
+}
+
+function preview(key) {
+  fx.unlockAudio();
+  const p = FX_POS.clone();
+  if (key === 'select' || key === 'swap' || key === 'hover') fx.play(key === 'hover' ? 'select' : key, p);
+  else if (key === 'cut') fx.play('cut', p.clone().setY(0.2), { axis: new THREE.Vector3(1, 0, 0), width: 0.35 });
+  else if (key === 'land') fx.play('land', p.clone().setY(0.01), { radius: 0.15 });
+  else if (key === 'gather') { gatherPreview = 1.5; fx.playSound('tick'); }
+  else fx.celebrate(key, p);
+}
+document.querySelectorAll('[data-fx]').forEach((b) => (b.onclick = () => preview(b.dataset.fx)));
+
+function renderAll() { renderRolls(); renderGlobal(); renderFlow(); renderFx(); }
+renderAll();
+window.editor = { rack: () => rack, exportConfig, THREE, fx: () => fx, config: () => config };
 </script>
 </body>
 </html>

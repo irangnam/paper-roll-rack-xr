@@ -41,6 +41,7 @@ export class GiftWrapStation extends THREE.EventDispatcher {
       rotY: this.paper.rotation.y,
     };
     this.foldThreshold = opts.foldThreshold ?? 0.55;
+    this.auto = !!opts.auto;      // true = 자동 진행: 꼭짓점 표시·잡기 없음, wrap-flow.js 가 target[] 을 정함
 
     const dict = this.paperMesh.morphTargetDictionary;
     this.mHalf = [1, 2, 3, 4].map((k) => dict[`Corner${k}_Half`]);
@@ -130,6 +131,7 @@ export class GiftWrapStation extends THREE.EventDispatcher {
 
   /* ------------------------------------------------ rack grabbable */
   grabDistance(p) {
+    if (this.auto) return null;   // 자동 진행(wrap-flow.js)에서는 잡기 대신 선택/모으기로 조작
     const lp = this.root.worldToLocal(_v.copy(p));
     if (this.state === 'wrapped') return lp.distanceTo(_w.copy(this.gift.position).setY(this.tableY + this.R)) - this.R - 0.03;
     if (this.state === 'free' || this.state === 'falling') return lp.distanceTo(this.ball.position) - this.R;
@@ -209,7 +211,7 @@ export class GiftWrapStation extends THREE.EventDispatcher {
       this._applyMorph();
       if (this.kWrap >= 1) this._finish();
     }
-    const show = (this.state === 'onPaper') && this.ballOnSheet();
+    const show = !this.auto && (this.state === 'onPaper') && this.ballOnSheet();
     this.corners.forEach((c, i) => { const h = this.hints[i]; h.visible = show && !this.locked[c.key]; if (h.visible) this._cornerPos(c, h.position); });
   }
 

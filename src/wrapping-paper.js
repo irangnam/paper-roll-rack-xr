@@ -426,6 +426,68 @@ export class WrappingPaperRack extends THREE.EventDispatcher {
     if (L > r.pull) { r.feed += L - r.pull; r.pull = L; }
   }
 
+  /* -------------------------------------------------- 자동 진행(auto flow)용 */
+  /** 롤이 쉬는 상태의 길이 (커터 아래로 살짝 나온 길이) */
+  restPull(i) { const r = this.rolls[i]; return r ? r.cutDist + this.config.interaction.startLip : 0; }
+
+  /** i번 롤 종이가 선반 모서리에 닿지 않고 공중에 똑바로 늘어질 수 있는 길이 (접점부터) */
+  freeHangLength(i) {
+    const r = this.rolls[i]; if (!r) return 0;
+    const t = r.tiltEdge ?? 0, ct = Math.cos(t), e = r.edge;
+    return e && ct > 0.01 ? (r.Rs * Math.sin(t) - e.y) / ct : 0.3;
+  }
+
+  /** 조각(떨어지는 종이)을 만들지 않고 d 아래 부분을 잘라 없앰 — 잘린 부분의 월드 자세를 돌려줌
+   *  { cut: 자른 선 가운데, mid: 잘린 종이 가운데, down: 늘어진 방향, axis: 롤 축, length, width } */
+  cutAway(i, d) {
+    const r = this.rolls[i]; if (!r) return null;
+    d = Math.max(d, r.cutDist);
+    const L = r.pull - d; if (L <= 0.003) return null;
+    this.root.updateMatrixWorld(true);
+    const at = this._pointAt(r, d), mid = this._pointAt(r, d + L / 2);
+    const M = r.pivot.matrixWorld;
+    const info = {
+      cut: new THREE.Vector3(0, at.y, at.z).applyMatrix4(M),
+      mid: new THREE.Vector3(0, mid.y, mid.z).applyMatrix4(M),
+      down: new THREE.Vector3(0, -Math.cos(at.theta), Math.sin(at.theta)).transformDirection(M),
+      axis: new THREE.Vector3(1, 0, 0).transformDirection(M),
+      length: L, width: r.width, roll: i,
+    };
+    r.pull = d; r.retracting = false; r.tiltTarget = r.tiltEdge;
+    this._buildPath(r, false);
+    r.cooldown = this.config.interaction.cutCooldown;
+    this.dispatchEvent({ type: 'cut', roll: i, length: L, piece: null });
+    return info;
+  }
+
+  /** 롤 강조(가리킬 때): k = 0 이면 끔 */
+  setHighlight(i, color, k) {
+    const r = this.rolls[i]; if (!r) return;
+    for (const m of [r.rollMat, r.sheetMat]) { m.emissive.set(color); m.emissiveIntensity = k; }
+  }
+
+  /** 월드 점 p 에서 i번 롤(감긴 종이 원통 + 늘어진 종이 끝)까지 거리 — 손가락으로 톡 칠 때 */
+  rollDistance(i, p) {
+    const r = this.rolls[i]; if (!r) return Infinity;
+    if (r.outerR === undefined) {
+      const b = r.paperNode ? new THREE.Box3().setFromObject(r.paperNode) : null;
+      r.outerR = b ? Math.max(r.R, (b.max.y - b.min.y) / 2) : r.R + 0.015;
+    }
+    const lp = r.pivot.worldToLocal(_v.copy(p));
+    const dx = Math.max(0, Math.abs(lp.x) - r.width / 2);
+    const dRoll = Math.hypot(dx, Math.max(0, Math.hypot(lp.y, lp.z) - r.outerR));
+    const pr = this._project(r, lp);
+    const dSheet = pr.d > 0 ? Math.hypot(dx, pr.off) : Infinity;
+    return Math.min(dRoll, dSheet);
+  }
+
+  /** i번 롤을 가리킬 때 레이캐스트할 메시들 */
+  getRollMeshes(i) {
+    const r = this.rolls[i]; if (!r) return [];
+    const a = [r.sheet]; r.paperNode?.traverse((o) => o.isMesh && a.push(o)); r.coreNode?.traverse((o) => o.isMesh && a.push(o));
+    return a;
+  }
+
   getSheetMeshes() { return this.rolls.map((r) => r.sheet); }
   getPieceMeshes() { return this.pieces.map((p) => p.mesh); }
   getState() {

@@ -90,6 +90,27 @@ export class Ribbons extends THREE.EventDispatcher {
     this._sendHome(it);
   }
 
+  /** 자동 진행: i번 리본이 상자에서 날아올라 선물 목에 '착' 붙음 (잡지 않아도 됨). 끝나면 'attached' */
+  autoAttach(i = 0, duration = 0.8) {
+    const it = this.items[i], gift = this.station.gift;
+    if (!it || !gift || it.state === 'flying' || this.onGift === it) return false;
+    if (this.onGift) this._sendHome(this.onGift);
+    gift.updateMatrixWorld(true);
+    const f = this._neckFrame(gift);
+    gift.attach(it.obj);
+    it.from = { pos: it.obj.position.clone(), quat: it.obj.quaternion.clone(), scale: it.obj.scale.x };
+    it.target = { pos: gift.worldToLocal(f.pos.clone()), quat: gift.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(f.quat), scale: 0.72 };
+    it.state = 'flying'; it.anim = 0; it.dur = duration; this.onGift = it;
+    return true;
+  }
+
+  /** 가리킬 때 강조 (리본마다 재질을 따로 복제해 둠) */
+  setHighlight(i, color, k) {
+    const it = this.items[i]; if (!it) return;
+    if (!it.mats) { it.mats = []; it.obj.traverse((o) => { if (o.isMesh) { o.material = o.material.clone(); it.mats.push(o.material); } }); }
+    for (const m of it.mats) if (m.emissive) { m.emissive.set(color); m.emissiveIntensity = k; }
+  }
+
   _sendHome(it) {
     this.box.root.attach(it.obj);
     it.target = { pos: it.home.pos, quat: it.home.quat, scale: 1 }; it.state = 'returning'; it.anim = 0;
@@ -98,6 +119,17 @@ export class Ribbons extends THREE.EventDispatcher {
 
   update(dt) {
     for (const it of this.items) {
+      if (it.state === 'flying') {                       // 포물선으로 날아가 붙음
+        it.anim = Math.min(1, it.anim + dt / it.dur);
+        const t = it.anim, e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+        it.obj.position.lerpVectors(it.from.pos, it.target.pos, e);
+        it.obj.position.y += Math.sin(Math.PI * t) * 0.16;
+        it.obj.quaternion.slerpQuaternions(it.from.quat, it.target.quat, e);
+        it.obj.quaternion.multiply(_q.setFromAxisAngle(_v.set(0, 1, 0), Math.sin(Math.PI * t) * 0.6));   // 날아가며 살짝 흔들림
+        it.obj.scale.setScalar(it.from.scale + (it.target.scale - it.from.scale) * e);
+        if (t >= 1) { it.obj.position.copy(it.target.pos); it.obj.quaternion.copy(it.target.quat); it.obj.scale.setScalar(it.target.scale); it.state = 'onGift'; this.dispatchEvent({ type: 'attached', ribbon: it.i }); }
+        continue;
+      }
       if (it.state !== 'attaching' && it.state !== 'returning') continue;
       const k = 1 - Math.exp(-(it.state === 'attaching' ? 14 : 8) * dt);
       it.obj.position.lerp(it.target.pos, k); it.obj.quaternion.slerp(it.target.quat, k);
