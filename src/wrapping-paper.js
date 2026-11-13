@@ -282,7 +282,8 @@ export class WrappingPaperRack extends THREE.EventDispatcher {
     this.root.name = 'WrappingPaperRack';
     this.rolls = [];
     this.pieces = [];
-    this.holds = new Map();          // hand Object3D -> { type: 'sheet', roll } | { type: 'piece', piece }
+    this.holds = new Map();
+    this.grabbables = [];            // 외부 잡을 수 있는 것 (배스밤, 포장 꼭짓점 등): { grabDistance(p, hand), grab(hand, p), release(hand), update(dt) }          // hand Object3D -> { type: 'sheet', roll } | { type: 'piece', piece }
     this.scissors = null;
     this.guide = null;               // { roll, d, dist } 현재 절취선
     this._texCache = new Map();
@@ -442,6 +443,11 @@ export class WrappingPaperRack extends THREE.EventDispatcher {
     const hp = hand.getWorldPosition(new THREE.Vector3());
     const gr = this.config.interaction.grabRadius;
 
+    // 0) 외부 물체 (배스밤, 포장지 꼭짓점 등) — 가장 가까운 것
+    let gb = null, gd = gr * 1.2;
+    for (const g of this.grabbables) { const d = g.grabDistance?.(hp, hand); if (d !== undefined && d !== null && d < gd) { gd = d; gb = g; } }
+    if (gb && gb.grab(hand, hp)) { this.holds.set(hand, { type: 'ext', g: gb }); return true; }
+
     // 1) 늘어진 종이 아래쪽 끝
     let best = null, bestD = Infinity;
     for (const r of this.rolls) {
@@ -481,6 +487,7 @@ export class WrappingPaperRack extends THREE.EventDispatcher {
     const h = this.holds.get(hand); if (!h) return;
     this.holds.delete(hand);
     if (h.type === 'piece') this._drop(h.piece);
+    if (h.type === 'ext') h.g.release(hand);
     if (h.type === 'sheet' && this.config.interaction.retractOnRelease) h.roll.retracting = true;
   }
 
@@ -517,6 +524,27 @@ export class WrappingPaperRack extends THREE.EventDispatcher {
   _flatTarget(yaw, flipped) {
     return new THREE.Quaternion().setFromEuler(_e.set(0, yaw + (flipped ? Math.PI : 0), 0))
       .multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(flipped ? Math.PI / 2 : -Math.PI / 2, 0, 0)));
+  }
+
+  addGrabbable(g) { this.grabbables.push(g); return g; }
+
+  /** 바닥에 놓인 자른 종이를 랙 관리에서 빼냄 (포장용). restorePiece 로 되돌림 */
+  takePiece(pc) {
+    const i = this.pieces.indexOf(pc); if (i < 0) return null;
+    this.pieces.splice(i, 1);
+    for (const [hand, h] of this.holds) if (h.piece === pc) this.holds.delete(hand);
+    return pc;
+  }
+  restorePiece(pc) { if (!this.pieces.includes(pc)) this.pieces.push(pc); }
+
+  /** 월드 좌표(x,z) 아래에 놓여 있는(rest) 자른 종이 */
+  restingPieceAt(worldPos) {
+    for (const pc of this.pieces) {
+      if (pc.state !== 'rest' && pc.state !== 'landing') continue;
+      const p = pc.mesh.worldToLocal(_v.copy(worldPos));
+      if (Math.abs(p.x) <= pc.width / 2 && Math.abs(p.y) <= pc.length / 2) return pc;
+    }
+    return null;
   }
 
   /** 월드 좌표에서 가장 가까운 자른 종이 */
@@ -882,6 +910,7 @@ export class WrappingPaperRack extends THREE.EventDispatcher {
     }
 
     for (const pc of this.pieces) simulatePiece(pc, dt);
+    for (const g of this.grabbables) g.update?.(dt);
 
     // 가위 → 절취선 / 자르기
     this._updateScissors(it);
