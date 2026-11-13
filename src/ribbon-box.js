@@ -4,6 +4,7 @@
  *   const box = new RibbonBox(rack, (await loader.loadAsync('models/RibbonBox.glb')).scene, { parent: workspace });
  *   box.toggle() / box.open() / box.close()
  *
+ * 기본: 블렌더 장면처럼 활짝 열린 채로 시작.
  * 조작: 뚜껑(특히 앞쪽 걸쇠 부분)을 잡고 들어 올리면 경첩을 따라 열림.
  *       놓을 때 충분히 열려 있으면 활짝 열린 채로, 아니면 닫힘. (손 주먹 / 컨트롤러 그립 / 마우스 드래그 공통)
  * 크기: 기본 폭 0.28 × 깊이 0.16 × 높이 0.11 m (랙의 1/2 폭)
@@ -24,13 +25,14 @@ export class RibbonBox extends THREE.EventDispatcher {
     this.W = 0.28; this.D = 0.16; this.Hl = 0.032; this.Hb = this.lid.position.y;
     this.OPEN = opts.openAngle ?? THREE.MathUtils.degToRad(102);
     this.meshes = []; this.root.traverse((o) => { if (o.isMesh) this.meshes.push(o); });
-    this.angle = 0; this.vel = 0; this.target = 0; this.heldBy = null; this.isOpen = false;
+    // 처음 각도 = 블렌더에서 내보낸 뚜껑 자세 (지금은 활짝 열린 채로 내보냄)
+    this.angle = Math.max(0, -this.lid.rotation.x); this.vel = 0; this.target = this.angle; this.heldBy = null; this.isOpen = this.angle > 0.3;
     rack.addGrabbable(this);
   }
 
   getMeshes() { return this.meshes; }
 
-  open() { this.target = this.OPEN; }
+  open(instant = false) { this.target = this.OPEN; if (instant) { this.angle = this.OPEN; this.vel = 0; } }
   close() { this.target = 0; }
   toggle() { this.target = this.target > 0.5 ? 0 : this.OPEN; }
 

@@ -29,9 +29,9 @@
   <h1>🎁 배스밤 포장 데모</h1>
   <div id="helpAuto"><b>① 포장지 당기기</b>: 롤을 <b>잡고 내 쪽으로 당기기</b> (VR: 핀치·트리거를 누른 채 당기기 · PC: 롤을 <b>누른 채 아래로 드래그</b>)<br>
   → 포장할 만큼 나오면 <b>지지직</b> 저절로 끊어져(오른쪽 → 왼쪽) 테이블에 놓이고 배스밤이 올라가요<br>
-  <b>② 🎁 포장하기</b> 버튼 (화면 아래 버튼 · 테이블 위 버튼 · 배스밤 클릭) — VR에선 두 손으로 감싸 모아도 돼요<br>
-  <b>③ 리본 고르기</b>: 저절로 열린 상자의 리본을 고르면 선물에 붙어요<br>
-  <kbd>R</kbd> = 처음부터 · 이펙트는 <a href="pattern-editor.html" style="padding:0;background:none;color:#ffd98a">편집기</a>에서 켜고 끄기</div>
+  <b>② 🎁 포장하기</b>: 아래 버튼 또는 배스밤 클릭 (VR: 배스밤을 톡 / 핀치 · 두 손으로 감싸 모으기)<br>
+  <b>③ 리본 고르기</b>: 왼쪽 상자 안 리본을 고르면 선물에 붙어요<br>
+  다 끝나면 선물을 한 번 더 누르면 처음부터 · <kbd>R</kbd> = 처음부터</div>
   <div id="helpManual" style="display:none"><b>VR 손</b>: <b>주먹</b> = 종이 끝 잡기(펴면 놓기) · <b>가위 손</b>(검지·중지만 펴기)으로 종이에 대고 <b>가위질 3번</b> = 자르기 · 들고 손목을 돌려 놓으면 <b>뒷면이 위로</b><br>
   <b>VR 컨트롤러</b>: 그립 = 잡기 · 오른손 트리거 = 가위질 (3번에 잘림)<br>
   <b>🎁 포장</b>(배스밤은 처음엔 랙 오른쪽에 그냥 놓여 있음): 롤에서 종이를 당겨 잘라 테이블에 내려놓고 → 배스밤을 그 종이 위로 옮기면 그 무늬로 포장지가 생김 → 꼭짓점(흰 점) 4개를 하나씩 잡아 배스밤 위로 들어 올렸다 놓기<br>
@@ -53,13 +53,13 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { WrappingPaperRack } from './src/wrapping-paper.js?v=16';
-import { GiftWrapStation } from './src/gift-wrap.js?v=16';
-import { RibbonBox } from './src/ribbon-box.js?v=16';
-import { Ribbons } from './src/ribbons.js?v=16';
-import { bindXRControllers, makeScissorsMarker, XR_SESSION_INIT } from './src/xr-input.js?v=16';
-import { Effects, mergeEffects } from './src/effects.js?v=16';
-import { AutoWrapFlow, bindSimpleInput, mergeFlow } from './src/wrap-flow.js?v=16';
+import { WrappingPaperRack } from './src/wrapping-paper.js?v=17';
+import { GiftWrapStation } from './src/gift-wrap.js?v=17';
+import { RibbonBox } from './src/ribbon-box.js?v=17';
+import { Ribbons } from './src/ribbons.js?v=17';
+import { bindXRControllers, makeScissorsMarker, XR_SESSION_INIT } from './src/xr-input.js?v=17';
+import { Effects, mergeEffects } from './src/effects.js?v=17';
+import { AutoWrapFlow, bindSimpleInput, mergeFlow } from './src/wrap-flow.js?v=17';
 
 const OVERRIDE_KEY = 'wrappingPaperConfig';
 
@@ -145,13 +145,8 @@ const ribbons = new Ribbons(rack, ribbonBox, station, [
 ]);
 ribbons.addEventListener('attached', () => (wrapText = '🎀 리본을 달았어요!'));
 
-// ---------- 이펙트 (파티클·색종이·완성 문구·효과음) — 편집기에서 켜고 끄기/값 조절
-// 색종이가 내려앉는 높이: 테이블 위면 테이블보 높이, 밖이면 방 바닥
-const groundAt = (x, z) => {
-  const lx = x - workspace.position.x, lz = z - workspace.position.z;
-  return (Math.abs(lx) <= 0.6 && Math.abs(lz) <= 0.4) ? workspace.position.y + TABLE_TOP + 0.0045 : 0;
-};
-const fx = new Effects(scene, config.effects, { getViewer: () => camera, groundAt });
+// ---------- 효과음 + 완성 순간 선물 통통 — 편집기에서 켜고 끄기
+const fx = new Effects(scene, config.effects);
 
 let flow = null, simpleInput = null, xrInput = null;
 if (AUTO) {
@@ -160,11 +155,11 @@ if (AUTO) {
 } else {
   xrInput = bindXRControllers(renderer, scene, rack);
   // 예전 방식에서도 완성 순간엔 축하 이펙트
-  station.addEventListener('wrapped', () => fx.celebrate('complete', station.ball.getWorldPosition(new THREE.Vector3())));
-  ribbons.addEventListener('attached', () => fx.celebrate('ribbon', station.ball.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0, 0.03, 0))));
+  station.addEventListener('wrapped', () => fx.celebrate('complete'));
+  ribbons.addEventListener('attached', () => fx.celebrate('ribbon'));
   renderer.domElement.addEventListener('pointerdown', () => fx.unlockAudio());
 }
-const restart = () => { releaseLeft(); if (flow) flow.reset(); else { ribbons.reset(); station.reset(); rack.resetRolls(); rack.clearPieces(); ribbonBox.close(); } fx.clear(); wrapText = ''; };
+const restart = () => { releaseLeft(); if (flow) flow.reset(); else { ribbons.reset(); station.reset(); rack.resetRolls(); rack.clearPieces(); ribbonBox.open(true); } fx.clear(); wrapText = ''; };
 document.getElementById('restart').onclick = () => restart();
 const wrapBtnEl = document.getElementById('wrapBtn');
 wrapBtnEl.style.display = AUTO ? '' : 'none';

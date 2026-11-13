@@ -4,16 +4,15 @@
  *   ① 포장지 당기기 : 롤을 집고(핀치·트리거·마우스 드래그) 내 쪽으로 당김
  *                    → 포장할 만큼(pullLength) 나오면 저절로 '지지직' 오른쪽 → 왼쪽으로 찢어짐 (가위질 없음)
  *                    → 포장 자리로 날아가 '착' 놓이고, 옆에 있던 배스밤이 폴짝 뛰어 종이 위에 올라감
- *   ② 포장하기     : '🎁 포장하기' 버튼(또는 배스밤 클릭/터치) → 꼭짓점이 저절로 올라와 차킨 포장
- *                    (VR 에선 두 손으로 감싸 모아도 됨) → '포장 완성!' 축하
- *   ③ 리본 고르기   : 상자가 저절로 열림 → 리본을 고르면 날아가 선물 목에 붙음 → '선물 완성!' 축하
- *   ④ 다시 하기 버튼
- * 바닥에 떨어지는 것 없음.
+ *   ② 포장하기     : flow.wrapNow() (HUD 의 🎁 포장하기 버튼) 또는 배스밤 클릭/톡 · VR 두 손 감싸 모으기
+ *                    → 꼭짓점이 저절로 올라와 차킨 포장 → 선물 통통 + 효과음
+ *   ③ 리본 고르기   : 늘 열려 있는 리본 상자(포장지 왼쪽)의 리본을 고르면 날아가 선물 목에 붙음
+ *   ④ 끝나면 선물을 한 번 더 누르면 처음부터 (VR 에서 다시 하기)
+ * 바닥에 떨어지는 것 없음. 파티클·빛 고리·떠 있는 안내판/버튼 없음 (움직임과 효과음만).
  *
  *   const flow = new AutoWrapFlow({ rack, station, box, ribbons, fx, workspace, cfg: config.flow, getViewer });
  *   const input = bindSimpleInput({ renderer, scene, camera, controls, flow, fx });
  *   매 프레임: input.update(dt); rack.update(dt); flow.update(dt);
- *   flow.wrapNow()  — 포장하기 (HUD 버튼 등에서)
  * 이벤트: 'state' { state } · 'feedback' { strength } (컨트롤러 진동용)
  */
 import * as THREE from 'three';
@@ -30,8 +29,6 @@ export const DEFAULT_FLOW = {
   twoHandEnd: 0.14,        // 이 거리까지 모으면 완성
   handRadius: 0.26,        // 손이 배스밤에서 이 거리 안에 있어야 '감싸는' 것으로 봄
   touchRadius: 0.025,      // 손가락 끝이 이 거리 안이면 '톡'
-  guideText: true,         // 공중에 단계 안내 문구
-  boxAutoOpen: true,       // 포장이 끝나면 리본 상자가 저절로 열림
 };
 export function mergeFlow(u) { return { ...DEFAULT_FLOW, ...(u || {}) }; }
 
@@ -39,18 +36,6 @@ const PAPER = 0.40;   // GiftWrap.glb 포장지 한 변
 const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 const easeOut = (t) => 1 - Math.pow(1 - t, 3);
 const _v = new THREE.Vector3(), _w = new THREE.Vector3(), _q = new THREE.Quaternion();
-
-/* ------------------------------------------------------------------ 공중 안내판 (캔버스 → 평면, 항상 나를 봄) */
-class Panel {
-  constructor(w, h, px = 1024) {
-    this.canvas = document.createElement('canvas'); this.canvas.width = px; this.canvas.height = Math.round(px * h / w);
-    this.tex = new THREE.CanvasTexture(this.canvas); this.tex.colorSpace = THREE.SRGBColorSpace;
-    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: this.tex, transparent: true, depthWrite: false, toneMapped: false }));
-    this.mesh.renderOrder = 25; this.key = '';
-  }
-  draw(key, fn) { if (key === this.key) return; this.key = key; const g = this.canvas.getContext('2d'); g.clearRect(0, 0, this.canvas.width, this.canvas.height); fn(g, this.canvas.width, this.canvas.height); this.tex.needsUpdate = true; }
-}
-const FONT = '"Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", system-ui, sans-serif';
 
 /* ------------------------------------------------------------------ 바닥 그림자 (종이·선물 아래 부드러운 그림자) */
 function makeSoftShadow() {
@@ -65,40 +50,6 @@ function makeSoftShadow() {
   return m;
 }
 
-/* ------------------------------------------------------------------ 진행 고리 (배스밤 둘레 테이블 위) */
-function makeProgressRing() {
-  const mat = new THREE.ShaderMaterial({
-    uniforms: { uP: { value: 0 }, uColor: { value: new THREE.Color('#ffd166') }, uT: { value: 0 }, uA: { value: 1 } },
-    vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
-    fragmentShader: `
-      uniform float uP; uniform vec3 uColor; uniform float uT; uniform float uA; varying vec2 vUv;
-      void main() {
-        vec2 p = vUv * 2.0 - 1.0; float r = length(p);
-        float band = smoothstep(0.80, 0.84, r) * (1.0 - smoothstep(0.96, 1.0, r));
-        float a = atan(p.x, p.y) / 6.28318530718 + 0.5;                 // 0~1, 앞쪽에서 시작
-        float filled = step(a, uP);
-        float breathe = 0.25 + 0.15 * sin(uT * 4.0);
-        float alpha = band * mix(breathe, 0.95, filled) * uA;
-        if (alpha < 0.01) discard;
-        gl_FragColor = vec4(mix(vec3(1.0), uColor, filled) * (1.0 + filled * 0.6), alpha);
-      }`,
-    transparent: true, depthWrite: false, side: THREE.DoubleSide, toneMapped: false,
-  });
-  const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
-  m.rotation.x = -Math.PI / 2; m.renderOrder = 9; m.visible = false; m.name = 'GatherRing';
-  return m;
-}
-
-
-function drawButton(panel, label, color) {
-  panel.draw(label, (g, w, h) => {
-    g.fillStyle = color; g.beginPath(); g.roundRect(6, 6, w - 12, h - 12, h / 2 - 6); g.fill();
-    g.strokeStyle = 'rgba(255,255,255,0.9)'; g.lineWidth = 6; g.stroke();
-    g.fillStyle = '#fff'; g.font = `800 ${Math.round(h * 0.48)}px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.fillText(label, w / 2, h / 2 + 4);
-  });
-}
-
 export class AutoWrapFlow extends THREE.EventDispatcher {
   constructor({ rack, station, box, ribbons, fx, workspace, cfg, getViewer }) {
     super();
@@ -106,27 +57,9 @@ export class AutoWrapFlow extends THREE.EventDispatcher {
     station.auto = true;
     this.root = new THREE.Group(); this.root.name = 'AutoWrapFlow'; workspace.add(this.root);
 
-    // 안내판: 랙 위쪽
-    this.guide = new Panel(0.46, 0.115); this.root.add(this.guide.mesh);
-    const rp = rack.root.position;
-    this.guide.mesh.position.set(rp.x, rp.y + 0.5, rp.z + 0.06);
-    // 버튼: 포장 자리 오른쪽 앞 (VR 에서도 손가락으로 누를 수 있게)
-    const hp = station.home.paper;
-    this.button = new Panel(0.15, 0.055, 512); this.root.add(this.button.mesh);
-    this.button.mesh.position.set(hp.x + 0.3, station.tableY + 0.13, hp.z + 0.08);
-    drawButton(this.button, '↺ 다시 하기', '#e8590c');
-    this.wrapBtn = new Panel(0.17, 0.058, 512); this.root.add(this.wrapBtn.mesh);
-    this.wrapBtn.mesh.position.set(hp.x + 0.3, station.tableY + 0.13, hp.z + 0.08);
-    drawButton(this.wrapBtn, '🎁 포장하기', '#d6336c');
-    this.button.mesh.visible = this.wrapBtn.mesh.visible = false;
-
-    this.ring = makeProgressRing(); this.root.add(this.ring);
     this.shadow = makeSoftShadow(); this.root.add(this.shadow);   // 흰 종이가 크림색 테이블보 위에서도 보이게
     this.proxy = new THREE.Object3D(); this.proxy.name = 'PullHand'; this.root.add(this.proxy);   // 당기는 손 대신 (입력 위치를 따라감)
 
-    // 상자 뚜껑은 몸통과 재질을 같이 쓰므로 강조용으로 복제
-    this.lidMats = [];
-    box.lid.traverse((o) => { if (o.isMesh) { o.material = o.material.clone(); this.lidMats.push(o.material); } });
     this.ballMat = station.ball.material;
 
     station.addEventListener('wrapped', () => this._onWrapped());
@@ -146,12 +79,11 @@ export class AutoWrapFlow extends THREE.EventDispatcher {
     this.ribbons.reset();
     this.station.reset();
     this.station.ball.scale.setScalar(1);
-    this.box.close();
+    this.box.open(true);   // 리본 상자는 늘 열려 있음
     this.rack.resetRolls();
     this.fx.clear?.();
     this.progress = 0; this.twoHand = 0; this.roll = -1; this.hop = null; this.bounce = null; this.squash = null; this.fly = null; this.tear = null;
     this.wrapping = false; this._tickQ = 0; this.pullFrac = 0;
-    this.ring.visible = false; this.button.mesh.visible = this.wrapBtn.mesh.visible = false;
     this._set('pick');
   }
 
@@ -161,16 +93,14 @@ export class AutoWrapFlow extends THREE.EventDispatcher {
     if (s === 'pick') this.rack.rolls.forEach((r, i) => T.push({ kind: 'roll', i, meshes: this.rack.getRollMeshes(i), dist: (p) => this.rack.rollDistance(i, p) }));
     if (s === 'gather' && !this.wrapping) {
       T.push({ kind: 'gift', meshes: [st.ball, st.paperMesh], dist: (p) => p.distanceTo(st.ball.getWorldPosition(_w)) - st.R });
-      T.push({ kind: 'wrapBtn', meshes: [this.wrapBtn.mesh], dist: (p) => this._panelDist(this.wrapBtn, p, 0.085, 0.029) });
     }
     if ((s === 'ribbon' || s === 'done') && this.box.angle > 0.6) {
       this.ribbons.items.forEach((it, i) => { if (it.state === 'home') T.push({ kind: 'ribbon', i, meshes: this._meshesOf(it.obj), dist: (p) => p.distanceTo(it.obj.getWorldPosition(_w)) - it.radius * 0.7 }); });
     }
-    if (this.button.mesh.visible) T.push({ kind: 'button', meshes: [this.button.mesh], dist: (p) => this._panelDist(this.button, p, 0.075, 0.0275) });
-    T.push({ kind: 'lid', meshes: this.box.getMeshes(), dist: (p) => this.box.grabDistance(p) });
+    // 다 끝나면 선물을 한 번 더 누르면(톡) 처음부터 — VR 에서 다시 하기
+    if (s === 'done' && this.stateT > 1) T.push({ kind: 'restart', meshes: this._meshesOf(st.gift ?? st.ball), dist: (p) => p.distanceTo(st.ball.getWorldPosition(_w)) - st.R });
     return T;
   }
-  _panelDist(panel, p, hw, hh) { const l = panel.mesh.worldToLocal(_w.copy(p)); return Math.hypot(Math.max(0, Math.abs(l.x) - hw), Math.max(0, Math.abs(l.y) - hh), l.z); }
   _meshesOf(o) { const a = []; o.traverse((m) => m.isMesh && a.push(m)); return a; }
   static same(a, b) { return a && b && a.kind === b.kind && a.i === b.i; }
 
@@ -183,7 +113,7 @@ export class AutoWrapFlow extends THREE.EventDispatcher {
     this.fx.unlockAudio();
     const k = target.kind;
     if (k === 'roll') return getPoint ? this._startPull(id, target.i, getPoint) : false;
-    if (k === 'gift' || k === 'wrapBtn') return this.wrapNow();
+    if (k === 'gift') return this.wrapNow();
     if (k === 'ribbon' && (this.state === 'ribbon' || this.state === 'done')) {
       if (this.ribbons.autoAttach(target.i, 0.8 / this.cfg.speed)) {
         this.fx.play('select', this.ribbons.items[target.i].obj.getWorldPosition(new THREE.Vector3()));
@@ -191,8 +121,7 @@ export class AutoWrapFlow extends THREE.EventDispatcher {
       }
       return false;
     }
-    if (k === 'lid') { this.box.toggle(); this.fx.playSound('select'); return true; }
-    if (k === 'button') { this.fx.play('select', this.button.mesh.getWorldPosition(new THREE.Vector3())); this.reset(); return true; }
+    if (k === 'restart') { this.fx.playSound('select'); this.reset(); return true; }
     return false;
   }
 
@@ -208,7 +137,7 @@ export class AutoWrapFlow extends THREE.EventDispatcher {
   wrapNow() {
     if (this.state !== 'gather' || this.wrapping) return false;
     this.wrapping = true;
-    this.fx.play('select', this.wrapBtn.mesh.visible ? this.wrapBtn.mesh.getWorldPosition(new THREE.Vector3()) : this.station.ball.getWorldPosition(new THREE.Vector3()));
+    this.fx.playSound('select');
     this._feedback(0.4);
     return true;
   }
@@ -332,7 +261,6 @@ export class AutoWrapFlow extends THREE.EventDispatcher {
     const pos = this.station.ball.getWorldPosition(new THREE.Vector3());
     const amt = this.fx.celebrate('complete', pos);
     if (amt) this.bounce = { t: 0, amt };
-    this.ring.visible = false; this.wrapBtn.mesh.visible = false;
     this._feedback(1);
     this._set('celebrate');
   }
@@ -361,7 +289,6 @@ export class AutoWrapFlow extends THREE.EventDispatcher {
       const e = T.t * (0.85 + 0.15 * T.t);                   // 거의 일정한 속도, 끝에서 살짝 빨라짐
       const frontX = T.s * (T.W / 2 - T.W * e);
       this._deformPiece(frontX, 1);
-      this.fx.tear(m.localToWorld(_v.set(frontX, T.L / 2, 0.002)), dt, new THREE.Vector3(-T.s, 0, 0).transformDirection(m.matrixWorld));
       if (T.t >= 1) {
         T.done = true; T.relax = 1;
         m.position.y -= 0.004;                                // 완전히 떨어지는 순간 살짝 툭
@@ -421,26 +348,15 @@ export class AutoWrapFlow extends THREE.EventDispatcher {
         st.target[k] = tk; st.locked[k] = tk >= 1;
       }
       if (p > before) {
-        this.fx.gather(st.ball.getWorldPosition(_v), p, dt, st.R + 0.02);
         const q = Math.floor(p * 4);
         if (q > this._tickQ) { this._tickQ = q; this.fx.playSound('tick'); this._feedback(0.15); }
       }
-      this.wrapBtn.mesh.visible = !this.wrapping && this.stateT > 0.25;
-      const rc = this.fx.cfg?.gather;
-      this.ring.visible = !!(this.fx.on && rc?.enabled !== false && rc?.ring && p > 0);
-      if (this.ring.visible) {
-        this.ring.position.set(st.paper.position.x, st.tableY + 0.004, st.paper.position.z);
-        this.ring.scale.setScalar(0.26);
-        const u = this.ring.material.uniforms; u.uP.value = p; u.uT.value = this.t; u.uColor.value.set(rc.ringColor || '#ffd166');
-      }
-      if (p >= 1) { this.wrapBtn.mesh.visible = false; this._set('finishing'); }
+      if (p >= 1) this._set('finishing');
     }
 
     if (this.state === 'celebrate' && this.stateT > 0.9 / sp) {
-      if (this.cfg.boxAutoOpen) this.box.open();
       this._set('ribbon');
     }
-    if (this.state === 'done' && this.stateT > 1.2) this.button.mesh.visible = true;
 
     if (this.bounce && st.gift) {
       const b = this.bounce; b.t += dt;
@@ -451,12 +367,6 @@ export class AutoWrapFlow extends THREE.EventDispatcher {
 
     this._updateShadow();
     this._updateHighlights();
-    this._updateGuide();
-    const viewer = this.getViewer();
-    if (viewer) {
-      viewer.getWorldPosition(_v);
-      for (const m of [this.guide.mesh, this.button.mesh, this.wrapBtn.mesh]) if (m.visible) m.lookAt(_v);
-    }
   }
 
   _updateShadow() {
@@ -479,39 +389,9 @@ export class AutoWrapFlow extends THREE.EventDispatcher {
     const is = (kind, i) => on && hov.some((t) => t.kind === kind && (i === undefined || t.i === i));
     this.rack.rolls.forEach((r, i) => this.rack.setHighlight(i, col, (is('roll', i) || this.drag?.i === i) ? k : 0));
     this.ribbons.items.forEach((it, i) => { if (is('ribbon', i) || it.mats) this.ribbons.setHighlight(i, col, is('ribbon', i) ? k : 0); });
-    for (const m of this.lidMats) { m.emissive.set(col); m.emissiveIntensity = is('lid') ? k * 0.6 : 0; }
-    if (this.ballMat?.emissive) { this.ballMat.emissive.set(col); this.ballMat.emissiveIntensity = is('gift') ? k * 0.8 : 0; }
-    this.button.mesh.scale.setScalar(is('button') ? 1.1 : 1);
-    this.wrapBtn.mesh.scale.setScalar((is('wrapBtn') || is('gift') ? 1.1 : 1) * (1 + 0.04 * Math.sin(this.t * 5)));   // 살짝 숨쉬듯
+    if (this.ballMat?.emissive) { this.ballMat.emissive.set(col); this.ballMat.emissiveIntensity = (is('gift') || is('restart')) ? k * 0.8 : 0; }
   }
 
-  _updateGuide() {
-    const show = this.cfg.guideText !== false;
-    this.guide.mesh.visible = show;
-    if (!show) return;
-    const need = Math.round(this.cfg.pullLength * 100);
-    const L = {
-      pick: ['포장지를 잡아 당겨요', '롤을 집고(핀치·트리거·드래그) 내 쪽으로 쭉'],
-      pull: [`조금 더! ${Math.round(this.pullFrac * need)} / ${need} cm`, '포장할 만큼 나오면 저절로 끊어져요'],
-      tear: ['지지직!', ''], fly: ['착착…', ''], hop: ['착착…', ''],
-      gather: ['🎁 포장하기를 눌러요', 'VR: 두 손으로 감싸 모아도 돼요'],
-      finishing: ['착착…', ''], celebrate: ['포장 완성!', ''],
-      ribbon: ['리본을 골라요 🎀', '상자 안 리본을 가리키고 집기 · 톡 · 클릭'], ribbonFly: ['리본을 다는 중…', ''],
-      done: ['완성! 🎉', '‘다시 하기’로 처음부터'],
-    }[this.state] || ['', ''];
-    this.guide.draw(L.join('|'), (g, w, h) => {
-      if (!L[0]) return;
-      g.fillStyle = 'rgba(20,22,28,0.72)'; g.beginPath(); g.roundRect(8, 8, w - 16, h - 16, 40); g.fill();
-      if (this.state === 'pull') {                         // 당긴 정도 막대
-        g.fillStyle = 'rgba(255,255,255,0.15)'; g.beginPath(); g.roundRect(40, h - 34, w - 80, 12, 6); g.fill();
-        g.fillStyle = '#ffd166'; g.beginPath(); g.roundRect(40, h - 34, Math.max(12, (w - 80) * this.pullFrac), 12, 6); g.fill();
-      }
-      g.fillStyle = '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle';
-      g.font = `800 ${Math.round(h * (L[1] ? 0.3 : 0.38))}px ${FONT}`;
-      g.fillText(L[0], w / 2, L[1] ? h * 0.34 : h / 2);
-      if (L[1]) { g.fillStyle = '#ffd98a'; g.font = `600 ${Math.round(h * 0.16)}px ${FONT}`; g.fillText(L[1], w / 2, h * 0.64); }
-    });
-  }
 }
 
 /* ================================================================== 입력: PC 마우스 + VR 손/컨트롤러
