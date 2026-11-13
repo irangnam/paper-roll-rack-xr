@@ -58,6 +58,7 @@ const _m = new THREE.Matrix4();
 const _q = new THREE.Quaternion();
 const _e = new THREE.Euler();
 const _m2q = new THREE.Quaternion();
+const _mInv = new THREE.Matrix4();
 
 export function mergeConfig(user = {}) {
   const base = structuredClone(DEFAULT_CONFIG);
@@ -446,9 +447,7 @@ export class WrappingPaperRack extends THREE.EventDispatcher {
     // 0) 외부 물체 (배스밤, 포장지 꼭짓점 등) — 가장 가까운 것
     let gb = null, gd = gr * 1.2;
     for (const g of this.grabbables) { const d = g.grabDistance?.(hp, hand); if (d !== undefined && d !== null && d < gd) { gd = d; gb = g; } }
-    if (gb && gb.grab(hand, hp)) { this.holds.set(hand, { type: 'ext', g: gb }); return true; }
-
-    // 1) 늘어진 종이 아래쪽 끝
+    // 1) 늘어진 종이 아래쪽 끝 (다른 물건보다 가까우면 종이가 먼저)
     let best = null, bestD = Infinity;
     for (const r of this.rolls) {
       if ([...this.holds.values()].some((h) => h.roll === r)) continue;
@@ -460,7 +459,8 @@ export class WrappingPaperRack extends THREE.EventDispatcher {
         if (dEdge < bestD) { bestD = dEdge; best = r; }
       }
     }
-    if (best) { best.retracting = false; this.holds.set(hand, { type: 'sheet', roll: best }); return true; }
+    if (best && !(gb && gd < bestD - 0.01)) { best.retracting = false; this.holds.set(hand, { type: 'sheet', roll: best }); return true; }
+    if (gb && gb.grab(hand, hp)) { this.holds.set(hand, { type: 'ext', g: gb }); return true; }
 
     // 2) 자른 종이 조각
     let bp = null; bestD = Infinity;
@@ -873,43 +873,65 @@ export class WrappingPaperRack extends THREE.EventDispatcher {
     }
     this.root.updateMatrixWorld(true);
 
-    // 자른 종이 떨어지기 → 가상 바닥에 눕기
+    // 자른 종이 떨어지기 → 테이블(영역 안) 또는 방 바닥에 눕기
     for (const pc of this.pieces) {
       if (pc.state !== 'falling') continue;
       const m = pc.mesh, sm = pc.sim;
+      pc.vh = pc.vh || new THREE.Vector3();
       sm.fallT += dt;
       pc.vel = Math.max(pc.vel - 9.8 * 0.3 * dt, -it.fallSpeed);
       m.position.y += pc.vel * dt;
       // 종이가 공기에 흔들리며 떨어짐: 좌우로 미끄러지고 살짝 기울어짐
       const sway = Math.min(1, sm.fallT * 2);
-      m.position.x += Math.cos(sm.fallT * 2.6 + sm.phase) * 0.10 * sway * dt;
-      m.position.z += Math.sin(sm.fallT * 2.1 + sm.phase * 1.7) * 0.07 * sway * dt;
+      m.position.x += (Math.cos(sm.fallT * 2.6 + sm.phase) * 0.10 * sway + pc.vh.x) * dt;
+      m.position.z += (Math.sin(sm.fallT * 2.1 + sm.phase * 1.7) * 0.07 * sway + pc.vh.z) * dt;
       const wob = _q.setFromEuler(_e.set(Math.sin(sm.fallT * 3.3 + sm.phase) * 0.22 * sway, Math.sin(sm.fallT * 2.4 + sm.phase) * 0.15 * sway, Math.sin(sm.fallT * 2.9) * 0.25 * sway));
       m.quaternion.slerp(_m2q.copy(pc.target).multiply(wob), 1 - Math.exp(-3.5 * dt));
-      // 종이의 가장 낮은 점이 바닥에 닿으면 그 자리에서 이어서 눕기 시작 (위치·각도 튀지 않음)
-      pc.floor = this.config.surfaceY + 0.0004 + this._restCount * 0.0004;
+      const T = this.table, onT = this._onTable(m.position.x, m.position.z);
+      // 가운데가 테이블 밖인데 종이 일부가 테이블 모서리에 걸림 → 모서리에서 바깥으로 미끄러지며 떨어짐
+      if (T && !onT && this._overTable(pc) && this._lowestY(pc) <= T.y + 0.003) {
+        const out = this._outward(m.position);
+        pc.vh.addScaledVector(out, 2.2 * dt).clampLength(0, 0.45);
+        m.position.y = Math.max(m.position.y, m.position.y + (T.y + 0.003 - this._lowestY(pc)) * 0.6);
+        m.quaternion.premultiply(_q.setFromAxisAngle(_v.set(out.z, 0, -out.x), 1.2 * dt));   // 바깥 쪽이 처지며 기울어짐
+        pc.vel = Math.max(pc.vel, -0.1);
+        sm.sliding = true;
+      }
+      pc.floor = (onT ? T.y : this.floorY) + 0.0004 + this._restCount * 0.0004;
       const low = this._lowestY(pc);
       if (low <= pc.floor) {
         m.position.y += pc.floor - low;
+        // 닿는 순간 조금 미끄러짐 (떨어지던 기울기 방향 + 흔들림 방향)
+        const d = _v.set(0, -1, 0).applyQuaternion(m.quaternion); d.y = 0;
+        if (d.lengthSq() > 1e-6) pc.vh.addScaledVector(d.normalize(), Math.min(0.35, -pc.vel * 0.4) * (onT ? 0.6 : 1));
+        pc.vh.x += Math.cos(sm.fallT * 2.6 + sm.phase) * 0.05; pc.vh.z += Math.sin(sm.fallT * 2.1 + sm.phase * 1.7) * 0.04;
+        pc.onTable = onT;
         pc.state = 'landing'; sm.landT = 0; sm.settle = 0.35; sm.restT = 0;
         this._restCount = (this._restCount + 1) % 60;
       }
     }
 
-    // 바닥에 닿은 뒤: 남은 기울기를 부드럽게 눕히고, 가장 낮은 점이 계속 바닥에 붙어 있게
+    // 바닥에 닿은 뒤: 미끄러지다 마찰로 멈추고, 남은 기울기를 눕히고, 가장 낮은 점이 바닥에 붙게
     for (const pc of this.pieces) {
       if (pc.state !== 'landing') continue;
       const m = pc.mesh, sm = pc.sim;
       sm.landT += dt;
+      m.position.x += pc.vh.x * dt; m.position.z += pc.vh.z * dt;
+      pc.vh.multiplyScalar(Math.exp(-(pc.onTable ? 5 : 3.5) * dt));
       m.quaternion.slerp(pc.target, 1 - Math.exp(-4 * dt));
-      const low = this._lowestY(pc);
+      // 테이블 위에서 미끄러지다 가운데가 모서리를 넘으면 → 떨어짐
+      if (pc.onTable && !this._onTable(m.position.x, m.position.z)) {
+        pc.state = 'falling'; pc.vel = 0; continue;
+      }
+      const low = this._lowestY(pc, pc.onTable);
       m.position.y += (pc.floor - low);
-      const push = this._rackOverlap(pc);                        // 랙 바닥과 겹치면 앞으로 미끄러져 나옴
+      const push = pc.onTable ? this._rackOverlap(pc) : 0;        // 랙 바닥과 겹치면 앞으로 미끄러져 나옴
       if (push > 0) m.position.z += Math.min(push, 0.5 * dt);
-      if (sm.landT > 0.8 && m.quaternion.angleTo(pc.target) < 0.01 && push <= 0) this._land(pc);
+      if (sm.landT > 0.8 && pc.vh.length() < 0.003 && m.quaternion.angleTo(pc.target) < 0.01 && push <= 0) this._land(pc);
     }
 
     for (const pc of this.pieces) simulatePiece(pc, dt);
+    for (const pc of this.pieces) if ((pc.state === 'landing' || pc.state === 'rest') && pc.onTable) this._drape(pc);
     for (const g of this.grabbables) g.update?.(dt);
 
     // 가위 → 절취선 / 자르기
@@ -923,15 +945,62 @@ export class WrappingPaperRack extends THREE.EventDispatcher {
   }
 
   /** 조각의 가장 낮은 정점 높이 (rack.root 로컬) */
-  _lowestY(pc) {
+  _lowestY(pc, tableOnly = false) {
     const m = pc.mesh; m.updateMatrix();
     const P = m.geometry.attributes.position, e = m.matrix.elements;
-    let low = Infinity;
+    let low = Infinity, any = false;
     for (let i = 0; i < P.count; i++) {
       const x = P.getX(i), y = P.getY(i), z = P.getZ(i);
+      if (tableOnly && !this._onTable(e[0] * x + e[4] * y + e[8] * z + e[12], e[2] * x + e[6] * y + e[10] * z + e[14])) continue;   // 모서리 밖으로 처진 부분은 제외
+      any = true;
       low = Math.min(low, e[1] * x + e[5] * y + e[9] * z + e[13]);
     }
-    return low;
+    return any ? low : this._lowestY(pc, false);
+  }
+
+  /** 작업 공간 설정: 테이블 윗면 영역(rack.root 로컬)과 방 바닥 높이. 없으면 surfaceY 를 무한 바닥으로 */
+  setSurfaces({ table = null, floorY = null } = {}) { this.table = table; this._floorY = floorY; }
+  get floorY() { return this._floorY ?? this.config.surfaceY; }
+  _onTable(x, z) {
+    const T = this.table; if (!T) return true;
+    return x >= T.minX && x <= T.maxX && z >= T.minZ && z <= T.maxZ;
+  }
+  /** 조각 네 귀퉁이 중 하나라도 테이블 위에 있나 */
+  _overTable(pc) {
+    const T = this.table; if (!T) return false; const m = pc.mesh; m.updateMatrix();
+    for (const sx of [-1, 1]) for (const sy of [-1, 1]) {
+      _v2.set(sx * pc.width / 2, sy * pc.length / 2, 0).applyMatrix4(m.matrix);
+      if (this._onTable(_v2.x, _v2.z)) return true;
+    }
+    return false;
+  }
+  /** 가장 가까운 테이블 모서리의 바깥 방향 */
+  _outward(p) {
+    const T = this.table, d = [p.x - T.maxX, T.minX - p.x, p.z - T.maxZ, T.minZ - p.z];
+    let k = 0; for (let i = 1; i < 4; i++) if (d[i] > d[k]) k = i;
+    return new THREE.Vector3([1, -1, 0, 0][k], 0, [0, 0, 1, -1][k]);
+  }
+  /** 테이블 위에 놓인 종이 중 모서리 밖으로 나간 부분을 모서리를 감싸며 아래로 처지게 (빳빳한 종이: 반지름 2.5 cm 로 꺾여 약 70° 로 늘어짐) */
+  _drape(pc) {
+    const T = this.table; if (!T) return;
+    const m = pc.mesh; m.updateMatrix();
+    const P = m.geometry.attributes.position, inv = _mInv.copy(m.matrix).invert();
+    const r = 0.025, thM = 1.2, arc = r * thM;
+    let changed = false;
+    for (let i = 0; i < P.count; i++) {
+      _v.set(P.getX(i), P.getY(i), P.getZ(i)).applyMatrix4(m.matrix);
+      const ox = _v.x > T.maxX ? _v.x - T.maxX : _v.x < T.minX ? T.minX - _v.x : 0;
+      const oz = _v.z > T.maxZ ? _v.z - T.maxZ : _v.z < T.minZ ? T.minZ - _v.z : 0;
+      const dist = Math.max(ox, oz); if (dist <= 0) continue;
+      let horiz, drop;
+      if (dist < arc) { horiz = r * Math.sin(dist / r); drop = r * (1 - Math.cos(dist / r)); }
+      else { const rem = dist - arc; horiz = r * Math.sin(thM) + rem * Math.cos(thM); drop = r * (1 - Math.cos(thM)) + rem * Math.sin(thM); }
+      if (ox >= oz) _v.x = _v.x > T.maxX ? T.maxX + horiz : T.minX - horiz;
+      else _v.z = _v.z > T.maxZ ? T.maxZ + horiz : T.minZ - horiz;
+      _v.y = Math.max(this.floorY + 0.001, _v.y - drop);
+      _v.applyMatrix4(inv); P.setXYZ(i, _v.x, _v.y, _v.z); changed = true;
+    }
+    if (changed) { P.needsUpdate = true; m.geometry.computeVertexNormals(); }
   }
 
   /** 누운 조각이 랙 바닥 영역과 앞뒤로 얼마나 겹치는지 (m) */

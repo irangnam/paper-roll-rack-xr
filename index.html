@@ -48,11 +48,11 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { WrappingPaperRack } from './src/wrapping-paper.js?v=12';
-import { GiftWrapStation } from './src/gift-wrap.js?v=12';
-import { RibbonBox } from './src/ribbon-box.js?v=12';
-import { Ribbons } from './src/ribbons.js?v=12';
-import { bindXRControllers, makeScissorsMarker, XR_SESSION_INIT } from './src/xr-input.js?v=12';
+import { WrappingPaperRack } from './src/wrapping-paper.js?v=13';
+import { GiftWrapStation } from './src/gift-wrap.js?v=13';
+import { RibbonBox } from './src/ribbon-box.js?v=13';
+import { Ribbons } from './src/ribbons.js?v=13';
+import { bindXRControllers, makeScissorsMarker, XR_SESSION_INIT } from './src/xr-input.js?v=13';
 
 const OVERRIDE_KEY = 'wrappingPaperConfig';
 
@@ -109,6 +109,9 @@ await rack.load();
 rack.root.position.set(0, TABLE_TOP, -0.245);
 workspace.add(rack.root);
 rack.viewer = camera;   // 세워 든 종이를 놓을 때: 내 쪽을 보던 면이 위로
+// 자른 종이가 놓이는 곳: 테이블 윗면(1.2 × 0.8 m, 테이블보 두께만큼 위) 안이면 테이블, 밖이면 방 바닥으로 떨어짐
+// (rack.root 기준 좌표: 랙은 테이블 가운데에서 뒤로 0.245 m)
+rack.setSurfaces({ table: { minX: -0.6, maxX: 0.6, minZ: -0.4 + 0.245, maxZ: 0.4 + 0.245, y: 0.0024 }, floorY: -H });
 
 rack.addEventListener('cut', (e) => console.log(`✂ Roll ${e.roll + 1}: ${(e.length * 100).toFixed(1)} cm`));
 // 배스밤 포장: 자른 종이를 바닥(테이블)에 놓고 → 배스밤을 그 위에 올리고 → 꼭짓점 4개를 배스밤 위로 접어 올리기
