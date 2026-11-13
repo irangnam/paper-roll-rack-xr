@@ -109,8 +109,21 @@ const workspace = new THREE.Group(); workspace.name = 'Workspace';
 workspace.position.set(0, H - TABLE_TOP, -0.55);
 scene.add(workspace);
 const gltfLoader = new GLTFLoader();
-const [tableGltf, giftGltf, boxGltf, rib1Gltf] = await Promise.all(['models/WorkTable.glb', 'models/GiftWrap.glb', 'models/RibbonBox.glb', 'models/Ribbon_01.glb'].map((u) => gltfLoader.loadAsync(u)));
+// 모델 파일에도 버전을 붙여 브라우저에 남은 예전 GLB 를 쓰지 않게 (블렌더에서 다시 내보내면 MODEL_V 를 올림)
+const MODEL_V = 18;
+const [tableGltf, giftGltf, boxGltf, rib1Gltf] = await Promise.all(['models/WorkTable.glb', 'models/GiftWrap.glb', 'models/RibbonBox.glb', 'models/Ribbon_01.glb'].map((u) => gltfLoader.loadAsync(`${u}?v=${MODEL_V}`)));
 workspace.add(tableGltf.scene);
+// 안전장치: 포장지가 테이블보(가장 높은 곳)보다 아래면 그만큼 포장지·배스밤을 올림 → 테이블보에 가려지지 않음
+{
+  const runner = tableGltf.scene.getObjectByName('TableRunner');
+  const wp = giftGltf.scene.getObjectByName('WrapPaper'), bb = giftGltf.scene.getObjectByName('BathBomb');
+  if (runner && wp && bb) {
+    workspace.updateMatrixWorld(true);
+    const top = workspace.worldToLocal(new THREE.Box3().setFromObject(runner).max.clone()).y;
+    const lift = top + 0.001 - wp.position.y;
+    if (lift > 0) { wp.position.y += lift; bb.position.y += lift; console.warn(`포장지가 테이블보 아래 → ${(lift * 1000).toFixed(1)} mm 올림`); }
+  }
+}
 
 const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.01, 50);
 camera.position.set(0.5, H + 0.45, 0.35);
