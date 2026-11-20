@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>수반 · 배스밤 시뮬레이터</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #1b120c; overflow: hidden; font-family: -apple-system, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif; }
+  canvas { display: block; touch-action: none; }
+  #hud { position: fixed; left: 14px; top: 14px; width: 270px; color: #f7e6cc; background: rgba(30, 18, 10, 0.72);
+         border: 1px solid rgba(255, 210, 150, 0.25); border-radius: 14px; padding: 12px 14px; backdrop-filter: blur(6px); font-size: 13px; line-height: 1.5; }
+  #hud h1 { font-size: 15px; margin: 0 0 6px; font-weight: 600; }
+  #hud p { margin: 4px 0 10px; opacity: 0.8; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .chip { border: 2px solid transparent; border-radius: 999px; padding: 4px 10px 4px 6px; cursor: pointer; color: #2a1a0e; font-size: 12px;
+          display: flex; align-items: center; gap: 6px; background: #f3e3cc; }
+  .chip i { width: 16px; height: 16px; border-radius: 50%; display: inline-block; box-shadow: inset 0 -2px 3px rgba(0,0,0,.15); }
+  .chip.on { border-color: #ffcf7a; background: #fff3dc; }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  button.b { background: #ffcf7a; color: #2a1a0e; border: 0; border-radius: 8px; padding: 7px 12px; font-weight: 600; cursor: pointer; font-size: 13px; }
+  button.s { background: rgba(255,255,255,.12); color: #f7e6cc; border: 1px solid rgba(255,255,255,.2); border-radius: 8px; padding: 6px 10px; cursor: pointer; font-size: 12px; }
+  select { background: rgba(255,255,255,.12); color: #f7e6cc; border: 1px solid rgba(255,255,255,.2); border-radius: 8px; padding: 5px; font-size: 12px; }
+  select option { color: #222; }
+  #fps { position: fixed; right: 12px; top: 12px; color: #f7e6cc; font: 12px ui-monospace, monospace; opacity: .7; }
+  #vrwrap button { font-family: inherit !important; }
+</style>
+<script type="importmap">
+{ "imports": {
+    "three": "./lib/three/build/three.module.js",
+    "three/addons/": "./lib/three/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="hud">
+  <h1>🫧 수반 · 배스밤 시뮬레이터</h1>
+  <p id="help">물을 끌어서 저어 보세요. 배스밤을 고르고 넣으면 퐁당!</p>
+  <div class="chips" id="chips"></div>
+  <div class="row" style="margin-bottom:8px">
+    <button class="b" id="drop">배스밤 넣기</button>
+    <button class="s" id="clear">물 비우기</button>
+  </div>
+  <div class="row">
+    <label>품질 <select id="q"><option value="low">낮음</option><option value="mid">보통</option><option value="high">높음</option></select></label>
+    <button class="s" id="snd">🔊 소리</button>
+  </div>
+</div>
+<div id="fps"></div>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { VRButton } from 'three/addons/webxr/VRButton.js';
+import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
+import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
+import { BasinSim } from './src/basin-sim.js?v=1';
+import { BasinWaterFX } from './src/basin-water.js?v=1';
+import { BathBombs, BasinAudio, BOMB_PRESETS, BOMB } from './src/bath-bomb.js?v=1';
+
+const MODEL_V = 1;
+const qs = new URLSearchParams(location.search);
+const isQuest = /OculusBrowser|Quest/i.test(navigator.userAgent);
+let quality = qs.get('q') || (isQuest ? 'mid' : 'high');
+
+// ---------------------------------------------------------------- 렌더러 · 장면
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
+renderer.xr.enabled = true;
+document.body.appendChild(renderer.domElement);
+const vrBtn = VRButton.createButton(renderer, { optionalFeatures: ['hand-tracking'] });
+document.body.appendChild(vrBtn);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1b120c);
+scene.fog = new THREE.Fog(0x1b120c, 3, 8);
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.35;
+
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.01, 30);
+camera.position.set(0.25, 1.45, 0.75);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 0.95, -0.55); controls.enableDamping = true; controls.minDistance = 0.3; controls.maxDistance = 4;
+controls.update();
+
+scene.add(new THREE.HemisphereLight(0xffe2c0, 0x3a2418, 0.9));
+const key = new THREE.DirectionalLight(0xffd9a8, 1.6); key.position.set(1.2, 2.6, 1.4); scene.add(key);
+const floor = new THREE.Mesh(new THREE.CircleGeometry(4, 48), new THREE.MeshStandardMaterial({ color: 0x5a3a24, roughness: 0.85 }));
+floor.rotation.x = -Math.PI / 2; scene.add(floor);
+
+// ---------------------------------------------------------------- 수반 불러오기
+const gltf = await new GLTFLoader().loadAsync(`./models/Basin.glb?v=${MODEL_V}`);
+const basin = gltf.scene;
+basin.position.set(0, 0, -0.7);                 // 사용자(원점) 앞 70cm, 수반 앞면이 +z(사용자 쪽)
+scene.add(basin);
+basin.updateMatrixWorld(true);
+
+const waterMesh = basin.getObjectByName('Basin_Water');
+const wb = new THREE.Box3().setFromObject(waterMesh);
+const R = waterMesh.userData.surface_radius ?? 0.294;
+const center = new THREE.Vector3((wb.min.x + wb.max.x) / 2, wb.max.y, wb.max.z - R);
+
+const sim = new BasinSim(renderer, { center, radius: R, wallZ: wb.min.z, quality });
+const fx = new BasinWaterFX(basin, sim);
+const audio = new BasinAudio();
+const magicLight = new THREE.PointLight(0xffcc88, 0.2, 1.6, 1.5);
+magicLight.position.set(center.x, center.y + 0.12, center.z + 0.05); scene.add(magicLight);
+const bombs = new BathBombs({ scene, sim, fx, audio, floorY: 0, light: magicLight, onHaptic: (a, ms) => haptic(null, a, ms) });
+
+// ---------------------------------------------------------------- HUD
+let presetIdx = 0;
+const chips = document.getElementById('chips');
+BOMB_PRESETS.forEach((p, i) => {
+  const el = document.createElement('div'); el.className = 'chip' + (i === 0 ? ' on' : '');
+  el.innerHTML = `<i style="background: radial-gradient(circle at 35% 35%, ${p.shell}, ${p.dye[0]})"></i>${p.name}`;
+  el.onclick = () => { presetIdx = i; [...chips.children].forEach((c, k) => c.classList.toggle('on', k === i)); };
+  chips.appendChild(el);
+});
+const dropBomb = () => {
+  audio.unlock();
+  const drop = new THREE.Vector3(); basin.getObjectByName('Basin_GiftDrop').getWorldPosition(drop);
+  drop.x += (Math.random() - 0.5) * 0.18; drop.z = center.z + 0.06 + Math.random() * 0.1; drop.y += 0.12;
+  bombs.spawn(BOMB_PRESETS[presetIdx], drop);
+};
+document.getElementById('drop').onclick = dropBomb;
+document.getElementById('clear').onclick = () => { bombs.clear(); sim.clear(); fx.reset(); };
+const qSel = document.getElementById('q'); qSel.value = quality;
+qSel.onchange = () => { quality = qSel.value; sim.setQuality(quality); fx.reset(); };
+const sndBtn = document.getElementById('snd');
+sndBtn.onclick = () => { audio.unlock(); audio.enabled = !audio.enabled; sndBtn.textContent = audio.enabled ? '🔊 소리' : '🔇 소리'; };
+addEventListener('keydown', (e) => {
+  const n = parseInt(e.key, 10);
+  if (n >= 1 && n <= BOMB_PRESETS.length) { chips.children[n - 1].click(); dropBomb(); }
+  if (e.key === ' ') dropBomb();
+});
+
+// ---------------------------------------------------------------- 물 젓기 (마우스 · 손가락 · 컨트롤러 공통)
+const _uv = new THREE.Vector2();
+class Stirrer {
+  constructor(src = null) { this.src = src; this.prev = new THREE.Vector3(); this.inWater = false; this.has = false; this.cool = 0; }
+  /** p: 월드 위치 (손끝). dt 초. 물에 들어가 있으면 true */
+  feed(p, dt) {
+    const Y = fx.surfaceY;
+    const inside = sim.isInside(p.x, p.z, 0.008) && p.y < Y + 0.006 && p.y > Y - 0.22;
+    this.cool = Math.max(0, this.cool - dt);
+    if (this.has && dt > 0) {
+      const vx = (p.x - this.prev.x) / dt, vy = (p.y - this.prev.y) / dt, vz = (p.z - this.prev.z) / dt;
+      const sp = Math.hypot(vx, vz);
+      const u = sim.toUv(p.x, p.z, _uv);
+      if (inside && !this.inWater) {                          // 첨벙: 들어가는 빠르기만큼
+        const s = Math.min(1.5, Math.abs(vy) * 0.8 + sp * 0.4 + 0.15);
+        sim.addWave(u.x, u.y, 0.03, -0.05 * s); sim.addDye(u.x, u.y, 0.03, 0, 0, 0, 0.4 * s);
+        if (this.cool === 0) { audio.splash(s); haptic(this.src, 0.4 * s, 40); this.cool = 0.15; }
+        for (let k = 0; k < 8 * s; k++) {
+          const a = Math.random() * 6.283, v = 0.2 + Math.random() * 0.4;
+          fx.bubbles.spawn(p.x, Y + 0.005, p.z, Math.cos(a) * v * 0.4, 0.4 + Math.random() * 0.6 * s, Math.sin(a) * v * 0.4,
+            { color: [0.8, 0.95, 1], size: 0.003 + Math.random() * 0.004, life: 1, kind: 1, grav: 9.8, floorY: Y - 0.005 });
+        }
+      }
+      if (inside) {
+        const k = Math.min(1, sp / 1.2);
+        sim.addVel(u.x, u.y, 0.045, sim.len(vx) * 1.4, sim.len(vz) * 1.4);
+        sim.addWave(u.x, u.y, 0.022, -0.010 * k - 0.0015);
+        if (sp > 0.25) sim.addDye(u.x, u.y, 0.025, 0, 0, 0, 0.035 * k);
+        if (sp > 0.6 && Math.random() < k * 0.5) {
+          fx.bubbles.spawn(p.x, Y + 0.004, p.z, vx * 0.3, 0.25 + Math.random() * 0.3, vz * 0.3,
+            { color: [0.8, 0.95, 1], size: 0.003, life: 0.8, kind: 1, grav: 9.8, floorY: Y - 0.005 });
+        }
+        if (this.src && sp > 0.15) haptic(this.src, 0.06 + 0.2 * k, 16);
+      }
+    }
+    this.inWater = inside; this.prev.copy(p); this.has = true;
+    return inside;
+  }
+  reset() { this.has = false; this.inWater = false; }
+}
+
+// 마우스: 물 위를 끌면 젓기 (물 밖에서 끌면 시점 회전). 그냥 움직여도 아주 살짝 잔물결
+const ray = new THREE.Raycaster(), ndc = new THREE.Vector2(), plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -center.y);
+const mouse = { stir: new Stirrer(), down: false, hit: new THREE.Vector3(), valid: false, last: performance.now() };
+function pick(e) {
+  ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  mouse.valid = !!ray.ray.intersectPlane(plane, mouse.hit) && sim.isInside(mouse.hit.x, mouse.hit.z, 0.01);
+}
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  audio.unlock(); pick(e);
+  if (mouse.valid) { mouse.down = true; controls.enabled = false; mouse.stir.reset(); mouse.stir.feed(mouse.hit.clone().setY(center.y + 0.05), 1 / 60); }
+});
+renderer.domElement.addEventListener('pointermove', (e) => {
+  pick(e);
+  if (mouse.down && mouse.valid) mouse.pending = mouse.hit.clone().setY(center.y - 0.02);
+  else if (!mouse.down && mouse.valid) { const u = sim.toUv(mouse.hit.x, mouse.hit.z, _uv); sim.addWave(u.x, u.y, 0.012, -0.0012); }
+});
+addEventListener('pointerup', () => { mouse.down = false; controls.enabled = true; mouse.stir.reset(); });
+
+// ---------------------------------------------------------------- VR: 컨트롤러 · 손
+const ctrlFactory = new XRControllerModelFactory(), handFactory = new XRHandModelFactory();
+handFactory.setPath(new URL('./models/hands/', location.href).href);
+const xrs = [];
+for (let i = 0; i < 2; i++) {
+  const c = renderer.xr.getController(i), grip = renderer.xr.getControllerGrip(i), hand = renderer.xr.getHand(i);
+  grip.add(ctrlFactory.createControllerModel(grip)); hand.add(handFactory.createHandModel(hand, 'mesh'));
+  scene.add(c, grip, hand);
+  const tip = new THREE.Object3D(); tip.position.set(0, -0.01, -0.07); grip.add(tip);     // 컨트롤러 앞 끝
+  const pinch = new THREE.Object3D(); scene.add(pinch);                                    // 손: 엄지·검지 사이
+  const st = { c, grip, hand, tip, pinch, src: null, isHand: false, stir: new Stirrer(), held: null };
+  c.addEventListener('connected', (e) => { st.src = e.data; st.isHand = !!e.data.hand; st.stir.src = e.data; });
+  c.addEventListener('disconnected', () => { st.src = null; if (st.held) { bombs.release(st.held); st.held = null; } });
+  c.addEventListener('selectstart', () => {                        // 트리거 · 핀치: 손에 배스밤이 나타남
+    audio.unlock();
+    st.held = bombs.spawn(BOMB_PRESETS[presetIdx], (st.isHand ? st.pinch : st.tip).getWorldPosition(new THREE.Vector3()), { holder: st.isHand ? st.pinch : st.tip });
+    presetIdx = (presetIdx + 1) % BOMB_PRESETS.length;
+    haptic(st.src, 0.3, 30);
+  });
+  c.addEventListener('selectend', () => { if (st.held) { bombs.release(st.held); st.held = null; } });
+  c.addEventListener('squeezestart', () => { presetIdx = (presetIdx + 1) % BOMB_PRESETS.length; haptic(st.src, 0.15, 20); });
+  xrs.push(st);
+}
+function haptic(src, amp, ms) {
+  const list = src ? [src] : xrs.map((s) => s.src).filter(Boolean);
+  for (const s of list) try { s.gamepad?.hapticActuators?.[0]?.pulse(amp, ms); } catch (e) { /* 진동 없음 */ }
+}
+const _p = new THREE.Vector3(), _q = new THREE.Vector3();
+function updateXRInput(dt) {
+  for (const st of xrs) {
+    if (!st.src) continue;
+    if (st.isHand) {
+      const idx = st.hand.joints?.['index-finger-tip'], th = st.hand.joints?.['thumb-tip'];
+      if (!idx || !th) continue;
+      idx.getWorldPosition(_p); th.getWorldPosition(_q);
+      st.pinch.position.copy(_p).add(_q).multiplyScalar(0.5);
+      if (!st.held) st.stir.feed(_p, dt);                            // 검지 끝으로 젓기
+    } else if (!st.held) { st.tip.getWorldPosition(_p); st.stir.feed(_p, dt); }
+  }
+}
+renderer.xr.addEventListener('sessionstart', () => {
+  document.getElementById('hud').style.display = 'none';
+});
+renderer.xr.addEventListener('sessionend', () => location.reload());
+
+// ---------------------------------------------------------------- 루프
+const clock = new THREE.Clock(); let frames = 0, acc = 0;
+const fpsEl = document.getElementById('fps');
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 1 / 20);
+  if (renderer.xr.isPresenting) updateXRInput(dt);
+  else {
+    controls.update();
+    if (mouse.down && mouse.pending) { mouse.stir.feed(mouse.pending, dt); }
+  }
+  bombs.update(dt);
+  sim.step(dt);
+  fx.update(dt, renderer);
+  renderer.render(scene, camera);
+  frames++; acc += dt;
+  if (acc > 0.5) { fpsEl.textContent = `${Math.round(frames / acc)} fps · ${quality}`; frames = 0; acc = 0; }
+});
+addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+window.__basin = { sim, fx, bombs, dropBomb, camera, controls, BOMB_PRESETS, setPreset: (i) => (presetIdx = i) };
+</script>
+</body>
+</html>
