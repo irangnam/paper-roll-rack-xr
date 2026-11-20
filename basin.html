@@ -54,9 +54,9 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
 import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
 import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
-import { BasinSim } from './src/basin-sim.js?v=19';
-import { BasinWaterFX } from './src/basin-water.js?v=19';
-import { BathBombs, BasinAudio, BOMB_PRESETS, BOMB } from './src/bath-bomb.js?v=19';
+import { BasinSim } from './src/basin-sim.js?v=22';
+import { BasinWaterFX } from './src/basin-water.js?v=22';
+import { BathBombs, BasinAudio, BOMB_PRESETS, BOMB } from './src/bath-bomb.js?v=22';
 
 const MODEL_V = 1;
 const qs = new URLSearchParams(location.search);
@@ -152,9 +152,9 @@ class Stirrer {
       const u = sim.toUv(p.x, p.z, _uv);
       if (inside && !this.inWater) {                          // 첨벙: 들어가는 빠르기만큼
         const s = Math.min(1.5, Math.abs(vy) * 0.8 + sp * 0.4 + 0.15);
-        sim.addWave(u.x, u.y, 0.03, -0.05 * s); sim.addDye(u.x, u.y, 0.03, 0, 0, 0, 0.4 * s);
+        sim.addWave(u.x, u.y, 0.025, -0.018 * s); sim.addDye(u.x, u.y, 0.02, 0, 0, 0, 0.08 * s);
         if (this.cool === 0) { audio.splash(s); haptic(this.src, 0.4 * s, 40); this.cool = 0.15; }
-        for (let k = 0; k < 8 * s; k++) {
+        for (let k = 0; k < 3 * s; k++) {
           const a = Math.random() * 6.283, v = 0.2 + Math.random() * 0.4;
           fx.bubbles.spawn(p.x, Y + 0.005, p.z, Math.cos(a) * v * 0.4, 0.4 + Math.random() * 0.6 * s, Math.sin(a) * v * 0.4,
             { color: [0.8, 0.95, 1], size: 0.003 + Math.random() * 0.004, life: 1, kind: 1, grav: 9.8, floorY: Y - 0.005 });
@@ -162,11 +162,11 @@ class Stirrer {
       }
       if (inside) {
         const k = Math.min(1, sp / 1.2);
-        sim.addVel(u.x, u.y, 0.045, sim.len(vx) * 1.4, sim.len(vz) * 1.4);
+        sim.addVel(u.x, u.y, 0.035, sim.len(vx) * 0.4, sim.len(vz) * 0.4);
         bombs.push(p, vx, vz);
-        sim.addWave(u.x, u.y, 0.022, -0.010 * k - 0.0015);
-        if (sp > 0.25) sim.addDye(u.x, u.y, 0.025, 0, 0, 0, 0.035 * k);
-        if (sp > 0.6 && Math.random() < k * 0.5) {
+        sim.addWave(u.x, u.y, 0.018, -0.004 * k - 0.0008);
+        if (sp > 0.3) sim.addDye(u.x, u.y, 0.02, 0, 0, 0, 0.012 * k);
+        if (sp > 0.8 && Math.random() < k * 0.25) {
           fx.bubbles.spawn(p.x, Y + 0.004, p.z, vx * 0.3, 0.25 + Math.random() * 0.3, vz * 0.3,
             { color: [0.8, 0.95, 1], size: 0.003, life: 0.8, kind: 1, grav: 9.8, floorY: Y - 0.005 });
         }
@@ -189,7 +189,8 @@ function pick(e) {
 }
 renderer.domElement.addEventListener('pointerdown', (e) => {
   audio.unlock(); pick(e);
-  if (mouse.valid) { mouse.down = true; controls.enabled = false; mouse.stir.reset(); mouse.stir.feed(mouse.hit.clone().setY(center.y + 0.05), 1 / 60); }
+  if (mouse.valid) { mouse.down = true; controls.enabled = false; mouse.stir.reset(); mouse.stir.feed(mouse.hit.clone().setY(center.y - 0.02), 1 / 60);
+    const u = sim.toUv(mouse.hit.x, mouse.hit.z, _uv); sim.addWave(u.x, u.y, 0.02, -0.012); audio.splash(0.15); }
 });
 renderer.domElement.addEventListener('pointermove', (e) => {
   pick(e);

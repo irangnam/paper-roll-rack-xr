@@ -161,15 +161,15 @@ export class BathBombs {
     }
   }
   /** 손으로 저으면 근처 배스밤이 그 방향으로 밀림 (p: 손끝, vx·vz: 손 속도 m/s) */
-  push(p, vx, vz, reach = 0.12) {
+  push(p, vx, vz, reach = 0.09) {
     for (const b of this.list) {
       if (b.state !== 'float') continue;
       const d = Math.hypot(b.mesh.position.x - p.x, b.mesh.position.z - p.z);
       if (d > reach) continue;
-      const f = (1 - d / reach) ** 2 * 0.22;
-      b.vel.x += (vx * 0.7 - b.vel.x) * f; b.vel.z += (vz * 0.7 - b.vel.z) * f;
-      b.spinV = (b.spinV ?? 0) + (vx * (b.mesh.position.z - p.z) - vz * (b.mesh.position.x - p.x)) * f * 20;
-      b.vel.y -= Math.min(0.2, Math.hypot(vx, vz)) * f * 0.5;          // 살짝 출렁
+      const f = (1 - d / reach) ** 2 * 0.06;
+      b.vel.x += (vx * 0.4 - b.vel.x) * f; b.vel.z += (vz * 0.4 - b.vel.z) * f;
+      b.spinV = (b.spinV ?? 0) + (vx * (b.mesh.position.z - p.z) - vz * (b.mesh.position.x - p.x)) * f * 8;
+      b.vel.y -= Math.min(0.2, Math.hypot(vx, vz)) * f * 0.3;          // 살짝 출렁
     }
   }
   clear() { for (const b of this.list) this._remove(b); this.list.length = 0; }

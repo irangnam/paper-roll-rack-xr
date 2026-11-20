@@ -95,6 +95,7 @@ void main() {
   float l2 = vnoise(sp * 7.0 + vec2(5.2 - t * 0.03, 1.7 + t * 0.015)) * 0.6 + vnoise(sp * 15.0 + 3.0) * 0.4;
   float l3 = vnoise(sp * 12.0 + vec2(9.1 + t * 0.06, 4.0)) * 0.6 + vnoise(sp * 26.0 + 7.0) * 0.4;
   vec3 body = mix(cMid, cDeep, smoothstep(0.15, 0.95, depth));
+  body = mix(vec3(0.55, 0.80, 0.70), body, smoothstep(0.02, 0.5, depth));     // 얕을수록 밝고 맑게
   body = mix(body, cBlue, smoothstep(0.58, 0.61, l2) * 0.4 * depth);
   body = mix(body, cLight, smoothstep(0.6, 0.63, l1) * 0.5);
   body = mix(body, cLight * 1.08, smoothstep(0.66, 0.68, l3) * 0.3);
@@ -116,6 +117,10 @@ void main() {
   vec3 Rf = reflect(-V, n);
   vec3 env = mix(vec3(0.30, 0.45, 0.42), vec3(0.85, 0.92, 0.86), smoothstep(-0.1, 0.9, Rf.y));
   vec3 col = mix(body, env, fres * 0.45);
+  float ang = atan(vW.z - uC.z, vW.x - uC.x);
+  float rimR = rr + 0.012 * sin(ang * 38.0 + t * 1.3) + 0.008 * sin(ang * 71.0 - t * 2.1) + (n.x + n.z) * 0.12;
+  float rimRef = smoothstep(0.86, 0.965, rimR);
+  col = mix(col, vec3(0.93, 0.85, 0.70) * (0.9 + 0.1 * sin(ang * 23.0 + t)), rimRef * 0.42);
   // 빛 반짝
   vec3 H = normalize(uLightDir + V);
   vec2 gp = vec2(wp.x * 60.0, wp.y * 140.0) + n.xz * 10.0;
@@ -169,9 +174,9 @@ void main() {
     col = mix(col, vec3(1.0, 0.995, 0.985) * (0.94 + 0.12 * bo), smoothstep(0.0, 0.6, bo) * 0.55 * opaque);
   }
 
-  float aBase = mix(0.38, 0.8, smoothstep(0.05, 0.9, depth));
+  float aBase = mix(0.1, 0.8, smoothstep(0.0, 0.85, depth));
   aBase = mix(aBase, 0.96, max(uMilk, clamp(den1 * 1.2, 0.0, 1.0)));
-  gl_FragColor = vec4(col, max(mix(aBase, 1.0, fres), glint));
+  gl_FragColor = vec4(col, max(max(mix(aBase, 1.0, fres), glint), rimRef * 0.45));
 }`;
 
 const UPPER_FRAG = /* glsl */`
