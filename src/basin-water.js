@@ -25,10 +25,46 @@ uniform float uTime, uSlope, uMilk, uTintAmt, uMagicAmt, uGlow, uGlitter;
 uniform vec3 uTint, uMagic, uLightDir, uLightCol;
 uniform vec4 uBomb;   // xyz 위치, w 거품 꽃 세기
 uniform vec4 uFall;   // 물줄기 닿는 곳 xyz, w 반지름
-uniform sampler2D uFoamTex;
+uniform sampler2D uFoamTex, uVel;
+uniform float uVelRes;
 uniform float uBombR;
 varying vec3 vW;
 ${NOISE}
+vec2 h22(vec2 p) { return vec2(hash12(p), hash12(p + 19.19)); }
+// 거품 텍스처 두 겹 (작은 · 큰 기포, 서로 돌려 반복 티 안 나게) → rg 노멀, b 높이
+vec4 foamSample(vec2 P, float t) {
+  vec4 a = texture2D(uFoamTex, P * 7.5);
+  vec4 b = texture2D(uFoamTex, mat2(0.8, -0.6, 0.6, 0.8) * P * 3.4 + 0.37);
+  b.b *= 0.92;
+  return a.b > b.b ? a : b;
+}
+// 부풀었다 터지는 기포 (고리 + 살짝 볼록)
+float boil(vec2 p, float t, float amt) {
+  vec2 ip = floor(p), fp = fract(p); float o = 0.0;
+  for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+    vec2 g = vec2(float(i), float(j)), c = ip + g; float h = hash12(c);
+    if (h > amt) continue;
+    float ph = fract(t * (0.35 + 0.6 * hash12(c + 3.0)) + h * 7.0);
+    float rad = (0.18 + 0.24 * hash12(c + 9.0)) * smoothstep(0.0, 0.85, ph);
+    float d = length(g + h22(c) * 0.6 + 0.2 - fp);
+    float ring = (1.0 - smoothstep(rad * 0.82, rad, d)) * (0.35 + 0.65 * smoothstep(rad * 0.45, rad * 0.9, d));
+    o = max(o, ring * step(ph, 0.93));
+  }
+  return o;
+}
+// 빛 그물: 움직이는 보로노이의 F2-F1 (세포 테두리). 세포 모서리(교차점) 가까이일수록 선이 두꺼움
+float causticNet(vec2 p, float t, float w0, float w1) {
+  vec2 ip = floor(p), fp = fract(p); float f1 = 8.0, f2 = 8.0;
+  for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+    vec2 g = vec2(float(i), float(j)), o = h22(ip + g);
+    o = 0.5 + 0.42 * sin(t * 0.3 + 6.2831 * o);
+    vec2 r = g + o - fp; float d = dot(r, r);
+    if (d < f1) { f2 = f1; f1 = d; } else if (d < f2) f2 = d;
+  }
+  float e = sqrt(f2) - sqrt(f1);
+  float w = mix(w0, w1, smoothstep(0.35, 0.75, sqrt(f1)));
+  return 1.0 - smoothstep(w * 0.4, w, e);
+}
 void main() {
   vec2 uv = ((vW.xz - uC.xz) / uR + 1.0) * 0.5;
   float rr = length(uv * 2.0 - 1.0);
@@ -51,15 +87,26 @@ void main() {
   vec4 d2 = (texture2D(uDye, ruv + vec2(0.014, 0.007)) + texture2D(uDye, ruv - vec2(0.007, 0.014)) + texture2D(uDye, ruv + vec2(-0.012, 0.010))) / 3.0;
   float depth = clamp(1.0 - rr * rr, 0.0, 1.0);
 
-  // 바닥 (도자기) + 일렁이는 빛 무늬
-  vec2 cp = (vW.xz + n.xz * 0.02) * 48.0;
-  float c1 = sin(cp.x + sin(cp.y * 1.3 + t * 1.1) * 1.4 + t * 0.7);
-  float c2 = sin(cp.y * 1.1 + sin(cp.x * 0.9 - t * 0.9) * 1.4 - t * 0.6);
-  float caus = pow(clamp(1.0 - abs(c1 + c2) * 0.5, 0.0, 1.0), 7.0);
-  vec3 floorCol = vec3(0.86, 0.70, 0.50) * (0.86 + 0.32 * caus * (1.0 - uMilk));
-  vec3 shallow = vec3(0.45, 0.82, 0.78), deep = vec3(0.10, 0.44, 0.50);
-  vec3 body = mix(floorCol, shallow, 0.42);
-  body = mix(body, deep, depth * 0.55);
+  // ---- 물빛: 맑고 산뜻한 그라데이션 (가장자리 얕은 아쿠아 → 가운데 깊은 청록)
+  vec3 shallow = vec3(0.58, 0.92, 0.87), mid = vec3(0.24, 0.73, 0.75), deep = vec3(0.08, 0.45, 0.58);
+  vec3 body = mix(shallow, mid, smoothstep(0.0, 0.55, depth));
+  body = mix(body, deep, smoothstep(0.4, 1.0, depth) * 0.8);
+  body = mix(body, vec3(0.78, 0.90, 0.78), smoothstep(0.84, 0.99, rr) * 0.4);      // 가장자리: 얕아서 바닥이 비침
+  // 칠한 듯한 결 (겹친 반투명 붓자국, 아주 천천히 흐름)
+  vec2 sp = mat2(0.92, -0.38, 0.38, 0.92) * vW.xz;
+  float st1 = vnoise(vec2(sp.x * 8.0, sp.y * 26.0) + vec2(t * 0.04, t * 0.11));
+  float st2 = vnoise(vec2(sp.x * 15.0 + 5.0, sp.y * 40.0) - vec2(t * 0.03, t * 0.08));
+  body *= 0.95 + 0.09 * smoothstep(0.4, 0.8, st1) - 0.06 * smoothstep(0.55, 0.85, st2);
+  // 바닥 빛 그물: 유기적인 세포 테두리 (만나는 곳 두껍게) + 살짝 어긋난 흐린 그림자 층
+  vec2 cpos = (vW.xz + n.xz * 0.02) * 13.0;
+  cpos += (vec2(vnoise(cpos * 0.8 + t * 0.07), vnoise(cpos * 0.8 + 4.3 - t * 0.06)) - 0.5) * 0.55;
+  float cLine = causticNet(cpos, t, 0.022, 0.085);
+  float cShadow = causticNet(cpos * 0.97 + vec2(0.16, 0.11), t, 0.06, 0.12);
+  float clear = 1.0 - uMilk;
+  body *= 1.0 - 0.08 * cShadow * clear;
+  body = mix(body, vec3(0.97, 1.0, 0.96), cLine * 0.48 * clear * (0.6 + 0.4 * depth));
+  // 은은한 빛 번짐 (램프 쪽)
+  body += vec3(0.75, 0.95, 0.90) * 0.16 * smoothstep(0.75, 0.0, length(uv - vec2(0.22, 0.55)));
   // 녹은 배스밤이 물 전체를 물들임 (뽀얗게)
   body = mix(body, uTint, uTintAmt);
   // 번지는 물감
@@ -74,11 +121,16 @@ void main() {
 
   // 따뜻한 방 반사
   vec3 Rf = reflect(-V, n);
-  vec3 env = mix(vec3(0.20, 0.12, 0.07), vec3(1.0, 0.84, 0.62), smoothstep(-0.1, 0.9, Rf.y));
-  vec3 col = mix(body, env, fres * 0.8);
+  vec3 env = mix(vec3(0.42, 0.52, 0.48), vec3(0.98, 0.96, 0.88), smoothstep(-0.1, 0.9, Rf.y));
+  vec3 col = mix(body, env, fres * 0.6);
   // 빛 반짝
   vec3 H = normalize(uLightDir + V);
-  col += uLightCol * pow(max(dot(n, H), 0.0), 240.0) * 2.2;
+  col += uLightCol * pow(max(dot(n, H), 0.0), 240.0) * 1.2;
+  vec2 gq = vW.xz * 70.0;
+  vec3 n2 = normalize(n + vec3(0.09 * sin(gq.x * 1.7 + gq.y * 0.6 + t * 2.3) + 0.06 * sin(gq.y * 2.9 - t * 3.1), 0.0,
+                               0.09 * cos(gq.y * 1.3 - gq.x * 0.8 - t * 1.9) + 0.06 * cos(gq.x * 2.6 + t * 2.7)));
+  float glint = smoothstep(0.35, 0.7, pow(max(dot(n2, H), 0.0), 160.0)) * (1.0 - uMilk * 0.7);
+  col = mix(col, vec3(1.0, 0.99, 0.95), glint * 0.9);
 
   // 거품
   float foam = clamp(texture2D(uDye, uv).a, 0.0, 1.0);
@@ -96,13 +148,14 @@ void main() {
   float A = clamp(foam * 1.1 + fl + fz * 0.8, 0.0, 1.0);
   if (A > 0.02) {
     // 텍스처 기포 두 겹 (작은 · 큰, 서로 돌려서 반복 티 안 나게), 아주 천천히 밀려감
-    vec2 drift = vec2(t * 0.0015, -t * 0.001);
-    vec2 q2 = mat2(0.8, -0.6, 0.6, 0.8) * Pxz;
-    vec4 f1 = texture2D(uFoamTex, Pxz * 7.5 + drift);
-    vec4 f2 = texture2D(uFoamTex, q2 * 3.4 + 0.37 - drift * 0.7);
-    float use2 = step(f1.b, f2.b * 0.92);
-    vec4 fs = mix(f1, f2, use2);
-    float h = max(f1.b, f2.b * 0.92);
+    // 물 흐름을 따라 거품 무늬가 흘러감 (플로우맵: 두 위상을 엇갈려 섞어 늘어나지 않게)
+    vec2 fv = clamp(texture2D(uVel, uv).xy / uVelRes * 2.0 * uR, -0.12, 0.12);
+    float ph0 = fract(t * 0.2), ph1 = fract(t * 0.2 + 0.5), wb = abs(1.0 - 2.0 * ph0);
+    vec2 P0 = Pxz - fv * ph0 * 5.0, P1 = Pxz - fv * ph1 * 5.0 + vec2(0.031, 0.017);
+    vec4 fs0 = foamSample(P0, t), fs1 = foamSample(P1, t);
+    vec4 fs = mix(fs0, fs1, wb);
+    vec4 f1 = fs, f2 = fs;
+    float h = fs.b;
     // 두께: 얇으면 큰 기포 꼭대기만, 두꺼우면 빈틈없이
     float T = A;
     float thr = mix(0.8, -0.25, smoothstep(0.0, 0.85, T));
@@ -119,11 +172,10 @@ void main() {
     float opaque = smoothstep(0.3, 0.75, T);
     float alpha = mix(0.35 + 0.65 * smoothstep(0.05, 0.35, rim), 1.0, opaque);
     col = mix(col, fc, cov * alpha * smoothstep(0.02, 0.12, T));
+    // 보글보글: 거품 속에서 기포가 부풀었다가 톡 터짐
+    float bo = boil(Pxz * 150.0, t, clamp(fl * 1.2 + foam * 0.5, 0.0, 0.9));
+    col = mix(col, vec3(1.0, 0.995, 0.985) * (0.94 + 0.12 * bo), smoothstep(0.0, 0.6, bo) * 0.55 * opaque);
   }
-  // 반짝이 (물감 짙은 곳)
-  vec2 gc = floor(vW.xz * 460.0);
-  float gh = hash12(gc + floor(t * 5.0 + hash12(gc) * 7.0));
-  col += vec3(1.0, 0.88, 0.6) * step(0.9965, gh) * clamp(den1 * 1.2 + uTintAmt * 0.4, 0.0, 1.0) * uGlitter * 2.0;
 
   gl_FragColor = vec4(col, mix(0.82 + 0.14 * max(uMilk, clamp(den1, 0.0, 1.0)), 1.0, fres));
 }`;
@@ -139,9 +191,9 @@ void main() {
   n.xz += 0.03 * vec2(sin(vW.x * 50.0 + t * 2.0), cos(vW.z * 46.0 - t * 1.7)); n = normalize(n);
   vec3 V = normalize(cameraPosition - vW);
   float fres = 0.03 + 0.97 * pow(1.0 - max(dot(n, V), 0.0), 5.0);
-  vec3 body = mix(vec3(0.62, 0.80, 0.74), uTint, uTintAmt * 0.8) + uMagic * uMagicAmt * 0.04;
+  vec3 body = mix(vec3(0.42, 0.84, 0.82), uTint, uTintAmt * 0.8) + uMagic * uMagicAmt * 0.04;
   vec3 Rf = reflect(-V, n);
-  vec3 col = mix(body, mix(vec3(0.2, 0.12, 0.07), vec3(1.0, 0.84, 0.62), smoothstep(-0.1, 0.9, Rf.y)), fres * 0.8);
+  vec3 col = mix(body, mix(vec3(0.42, 0.52, 0.48), vec3(0.98, 0.96, 0.88), smoothstep(-0.1, 0.9, Rf.y)), fres * 0.6);
   col += uLightCol * pow(max(dot(n, normalize(uLightDir + V)), 0.0), 200.0) * 2.0;
   col = mix(col, vec3(1.0), smoothstep(0.03, 0.0, r) * 0.6);
   gl_FragColor = vec4(col, mix(0.8, 1.0, fres));
@@ -355,7 +407,7 @@ export class BasinWaterFX {
         uC: { value: sim.center }, uR: { value: sim.radius }, uTime: { value: 0 }, uSlope: { value: 26 },
         uMilk: { value: 0 }, uTintAmt: { value: 0 }, uMagicAmt: { value: 0 }, uGlow: { value: 1 }, uGlitter: { value: 0.6 },
         uTint: { value: this.tint }, uMagic: { value: this.magic }, uLightDir: { value: lightDir }, uLightCol: { value: lightCol },
-        uBomb: { value: new THREE.Vector4() }, uBombR: { value: 0.03 }, uFall: { value: new THREE.Vector4(0, -9, 0, 0.03) }, uFoamTex: { value: makeFoamTexture() },
+        uBomb: { value: new THREE.Vector4() }, uBombR: { value: 0.03 }, uFall: { value: new THREE.Vector4(0, -9, 0, 0.03) }, uFoamTex: { value: makeFoamTexture() }, uVel: { value: null }, uVelRes: { value: 128 },
       },
     });
     water.material = this.waterMat; water.renderOrder = 2;
@@ -470,7 +522,7 @@ export class BasinWaterFX {
     const breathe = 0.85 + 0.15 * Math.sin(t * 1.3);
 
     const W = this.waterMat.uniforms;
-    W.uWave.value = sim.waveTexture; W.uDye.value = sim.dyeTexture; W.uWaveT.value.copy(sim.waveTexel);
+    W.uWave.value = sim.waveTexture; W.uDye.value = sim.dyeTexture; W.uVel.value = sim.vel.read.texture; W.uVelRes.value = sim.vel.size; W.uWaveT.value.copy(sim.waveTexel);
     W.uTime.value = t; W.uMilk.value = S.milk; W.uTintAmt.value = S.tintAmt; W.uMagicAmt.value = S.magicAmt; W.uGlow.value = breathe;
     W.uGlitter.value = S.glitter;
     for (const m of [this.upperMat, this.fallMat]) if (m) { m.uniforms.uTime.value = t; m.uniforms.uMagicAmt.value = S.magicAmt; m.uniforms.uTintAmt.value = S.tintAmt; }

@@ -160,6 +160,18 @@ export class BathBombs {
       b.vel.set((z.p.x - a.p.x) / dt, (z.p.y - a.p.y) / dt, (z.p.z - a.p.z) / dt).clampLength(0, 3);
     }
   }
+  /** 손으로 저으면 근처 배스밤이 그 방향으로 밀림 (p: 손끝, vx·vz: 손 속도 m/s) */
+  push(p, vx, vz, reach = 0.12) {
+    for (const b of this.list) {
+      if (b.state !== 'float') continue;
+      const d = Math.hypot(b.mesh.position.x - p.x, b.mesh.position.z - p.z);
+      if (d > reach) continue;
+      const f = (1 - d / reach) ** 2 * 0.22;
+      b.vel.x += (vx * 0.7 - b.vel.x) * f; b.vel.z += (vz * 0.7 - b.vel.z) * f;
+      b.spinV = (b.spinV ?? 0) + (vx * (b.mesh.position.z - p.z) - vz * (b.mesh.position.x - p.x)) * f * 20;
+      b.vel.y -= Math.min(0.2, Math.hypot(vx, vz)) * f * 0.5;          // 살짝 출렁
+    }
+  }
   clear() { for (const b of this.list) this._remove(b); this.list.length = 0; }
   get fizz() { return this.list.reduce((m, b) => Math.max(m, b.state === 'float' ? this._rate(b) : 0), 0); }
 
@@ -204,9 +216,9 @@ export class BathBombs {
       const dx = p.x - sim.center.x, dz = p.z - sim.center.z, d = Math.hypot(dx, dz), lim = sim.radius - r - 0.03;
       if (d > lim) { b.vel.x -= dx / d * (d - lim) * 8 * dt; b.vel.z -= dz / d * (d - lim) * 8 * dt; }
       if (p.z < sim.wallZ + r + 0.03) b.vel.z += (sim.wallZ + r + 0.03 - p.z) * 8 * dt;
-      b.vel.x *= Math.exp(-1.5 * dt); b.vel.z *= Math.exp(-1.5 * dt);
+      b.vel.x *= Math.exp(-0.9 * dt); b.vel.z *= Math.exp(-0.9 * dt);
       p.addScaledVector(b.vel, dt);
-      m.rotation.y += b.spin * dt * (0.08 + 0.12 * rate); m.rotation.x = 0.06 * Math.sin(b.t * 0.9); m.rotation.z = 0.06 * Math.cos(b.t * 0.7);
+      b.spinV = (b.spinV ?? 0) * Math.exp(-1.5 * dt); m.rotation.y += b.spin * dt * (0.08 + 0.12 * rate) + b.spinV * dt; m.rotation.x = 0.06 * Math.sin(b.t * 0.9); m.rotation.z = 0.06 * Math.cos(b.t * 0.7);
 
       // 물에 풀기: 소용돌이 없이 잔잔하게 바깥으로 번짐. 색은 시간 따라 바뀌어 동심원 띠 → 천천히 일렁여 마블 무늬
       const u = sim.toUv(p.x, p.z, _u), ru = sim.len(r), f = dt * 60;
