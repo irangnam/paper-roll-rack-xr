@@ -31,6 +31,14 @@ uniform float uBombR;
 varying vec3 vW;
 ${NOISE}
 vec2 h22(vec2 p) { return vec2(hash12(p), hash12(p + 19.19)); }
+// 물 무늬: x 밝은 덩어리, y 푸른 그늘, z 가는 결 선 (둥글고 유기적, 가로로 늘이지 않음)
+vec3 waterPat(vec2 P, float t) {
+  vec2 q = P + (vec2(vnoise(P * 5.0 + t * 0.03), vnoise(P * 5.0 + 7.3 - t * 0.03)) - 0.5) * 0.06;
+  float l1 = vnoise(q * 11.0 + vec2(t * 0.02, -t * 0.015)) * 0.65 + vnoise(q * 23.0 + 2.0) * 0.35;
+  float l2 = vnoise(q * 8.0 + vec2(4.1, 1.7 - t * 0.02)) * 0.65 + vnoise(q * 17.0 + 5.0) * 0.35;
+  float ln = abs(vnoise(q * 9.0 + vec2(8.0, t * 0.03)) - 0.5);
+  return vec3(smoothstep(0.58, 0.66, l1), smoothstep(0.57, 0.65, l2), 1.0 - smoothstep(0.008, 0.022, ln));
+}
 // 거품 텍스처 두 겹 (작은 · 큰 기포, 서로 돌려 반복 티 안 나게) → rg 노멀, b 높이
 vec4 foamSample(vec2 P, float t) {
   vec4 a = texture2D(uFoamTex, P * 7.5);
@@ -87,20 +95,18 @@ void main() {
   vec4 d2 = (texture2D(uDye, ruv + vec2(0.014, 0.007)) + texture2D(uDye, ruv - vec2(0.007, 0.014)) + texture2D(uDye, ruv + vec2(-0.012, 0.010))) / 3.0;
   float depth = clamp(1.0 - rr * rr, 0.0, 1.0);
 
-  // ---- 물빛: 짙은 청록 바탕에 반투명한 붓질 모양이 여러 겹 (가로로 길게, 천천히 흐름), 물결에 따라 일렁임
-  vec3 cDeep = vec3(0.10, 0.36, 0.38), cMid = vec3(0.18, 0.50, 0.48), cLight = vec3(0.44, 0.74, 0.64), cBlue = vec3(0.18, 0.33, 0.50);
-  vec2 wp = vW.xz + n.xz * 0.035;
-  vec2 sp = vec2(wp.x, wp.y * 2.6);
-  float l1 = vnoise(sp * 9.0 + vec2(t * 0.05, t * 0.02)) * 0.6 + vnoise(sp * 19.0 - vec2(t * 0.04, 0.0)) * 0.4;
-  float l2 = vnoise(sp * 7.0 + vec2(5.2 - t * 0.03, 1.7 + t * 0.015)) * 0.6 + vnoise(sp * 15.0 + 3.0) * 0.4;
-  float l3 = vnoise(sp * 12.0 + vec2(9.1 + t * 0.06, 4.0)) * 0.6 + vnoise(sp * 26.0 + 7.0) * 0.4;
-  vec3 body = mix(cMid, cDeep, smoothstep(0.15, 0.95, depth));
-  body = mix(vec3(0.55, 0.80, 0.70), body, smoothstep(0.02, 0.5, depth));     // 얕을수록 밝고 맑게
-  body = mix(body, cBlue, smoothstep(0.58, 0.61, l2) * 0.4 * depth);
-  body = mix(body, cLight, smoothstep(0.6, 0.63, l1) * 0.5);
-  body = mix(body, cLight * 1.08, smoothstep(0.66, 0.68, l3) * 0.3);
-  float ln = abs(vnoise(vec2(wp.x * 6.0, wp.y * 22.0) + vec2(t * 0.05, 0.0)) - 0.5);
-  body = mix(body, vec3(0.62, 0.86, 0.78), (1.0 - smoothstep(0.01, 0.025, ln)) * 0.3);
+  // ---- 물빛: 은은하게 푸른, 가볍고 맑은 물. 무늬는 둥글고 유기적이며 물 흐름을 따라 흘러가고 물결에 일그러짐
+  vec3 cDeep = vec3(0.30, 0.60, 0.62), cMid = vec3(0.46, 0.74, 0.73), cLight = vec3(0.80, 0.93, 0.88), cBlue = vec3(0.38, 0.58, 0.70);
+  vec2 fvw = clamp(texture2D(uVel, uv).xy / uVelRes * 2.0 * uR, -0.12, 0.12);
+  float fph0 = fract(t * 0.15), fph1 = fract(t * 0.15 + 0.5), fwb = abs(1.0 - 2.0 * fph0);
+  vec2 wp = vW.xz + n.xz * 0.09;
+  vec3 pa = waterPat(wp - fvw * fph0 * 6.0, t), pb = waterPat(wp - fvw * fph1 * 6.0 + vec2(0.043, 0.027), t);
+  vec3 pt = mix(pa, pb, fwb);
+  vec3 body = mix(cMid, cDeep, smoothstep(0.2, 0.95, depth) * 0.7);
+  body = mix(vec3(0.78, 0.90, 0.84), body, smoothstep(0.02, 0.55, depth));
+  body = mix(body, cBlue, pt.y * 0.3 * depth);
+  body = mix(body, cLight, pt.x * 0.45);
+  body = mix(body, vec3(0.9, 0.98, 0.95), pt.z * 0.3);
   // 녹은 배스밤이 물 전체를 물들임 (뽀얗게)
   body = mix(body, uTint, uTintAmt);
   // 번지는 물감
@@ -115,15 +121,15 @@ void main() {
 
   // 따뜻한 방 반사
   vec3 Rf = reflect(-V, n);
-  vec3 env = mix(vec3(0.30, 0.45, 0.42), vec3(0.85, 0.92, 0.86), smoothstep(-0.1, 0.9, Rf.y));
-  vec3 col = mix(body, env, fres * 0.45);
+  vec3 env = mix(vec3(0.62, 0.72, 0.68), vec3(0.95, 0.96, 0.92), smoothstep(-0.1, 0.9, Rf.y));
+  vec3 col = mix(body, env, fres * 0.4);
   float ang = atan(vW.z - uC.z, vW.x - uC.x);
   float rimR = rr + 0.012 * sin(ang * 38.0 + t * 1.3) + 0.008 * sin(ang * 71.0 - t * 2.1) + (n.x + n.z) * 0.12;
   float rimRef = smoothstep(0.86, 0.965, rimR);
   col = mix(col, vec3(0.93, 0.85, 0.70) * (0.9 + 0.1 * sin(ang * 23.0 + t)), rimRef * 0.42);
   // 빛 반짝
   vec3 H = normalize(uLightDir + V);
-  vec2 gp = vec2(wp.x * 60.0, wp.y * 140.0) + n.xz * 10.0;
+  vec2 gp = vec2(wp.x * 80.0, wp.y * 120.0) + n.xz * 10.0;
   float gn = vnoise(gp + vec2(t * 0.9, t * 0.35)) * 0.7 + vnoise(gp * 1.9 - vec2(t * 0.6, 0.0)) * 0.3;
   float lit = smoothstep(0.1, 0.8, pow(max(dot(n, H), 0.0), 12.0));
   float glint = smoothstep(0.74, 0.76, gn) * (0.15 + 0.85 * lit) * (1.0 - uMilk * 0.7);
@@ -174,7 +180,7 @@ void main() {
     col = mix(col, vec3(1.0, 0.995, 0.985) * (0.94 + 0.12 * bo), smoothstep(0.0, 0.6, bo) * 0.55 * opaque);
   }
 
-  float aBase = mix(0.1, 0.8, smoothstep(0.0, 0.85, depth));
+  float aBase = mix(0.08, 0.6, smoothstep(0.0, 0.9, depth));
   aBase = mix(aBase, 0.96, max(uMilk, clamp(den1 * 1.2, 0.0, 1.0)));
   gl_FragColor = vec4(col, max(max(mix(aBase, 1.0, fres), glint), rimRef * 0.45));
 }`;
@@ -190,12 +196,12 @@ void main() {
   n.xz += 0.03 * vec2(sin(vW.x * 50.0 + t * 2.0), cos(vW.z * 46.0 - t * 1.7)); n = normalize(n);
   vec3 V = normalize(cameraPosition - vW);
   float fres = 0.03 + 0.97 * pow(1.0 - max(dot(n, V), 0.0), 5.0);
-  vec3 body = mix(vec3(0.24, 0.58, 0.54), uTint, uTintAmt * 0.8) + uMagic * uMagicAmt * 0.04;
+  vec3 body = mix(vec3(0.58, 0.80, 0.76), uTint, uTintAmt * 0.8) + uMagic * uMagicAmt * 0.04;
   vec3 Rf = reflect(-V, n);
-  vec3 col = mix(body, mix(vec3(0.42, 0.52, 0.48), vec3(0.98, 0.96, 0.88), smoothstep(-0.1, 0.9, Rf.y)), fres * 0.6);
+  vec3 col = mix(body, mix(vec3(0.62, 0.72, 0.68), vec3(0.95, 0.96, 0.92), smoothstep(-0.1, 0.9, Rf.y)), fres * 0.4);
   col += uLightCol * pow(max(dot(n, normalize(uLightDir + V)), 0.0), 200.0) * 2.0;
   col = mix(col, vec3(1.0), smoothstep(0.03, 0.0, r) * 0.6);
-  gl_FragColor = vec4(col, mix(0.6, 1.0, fres));
+  gl_FragColor = vec4(col, mix(0.35, 1.0, fres));
 }`;
 
 const FALL_FRAG = /* glsl */`
