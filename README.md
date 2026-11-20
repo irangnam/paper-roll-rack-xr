@@ -128,10 +128,4 @@ rack.setPaperWidth(2, 0.40);
 - 무늬 이미지는 **위아래·좌우가 이어지는(seamless) 이미지**여야 이음새가 안 보입니다.
 - `interaction`: `cutMode`('contact' | 'trigger'), `scissorsHand`('right' | 'left'), `guideDistance`, `contactDistance`, `grabRadius`, `maxPull`, `maxPieces`, `fallSpeed` …
 
-## 수반 · 배스밤 시뮬레이터 (`basin.html`)
-
-- 모델: `models/Basin.glb` (Blender `Basin.blend` → `bake_basin.py` 로 구운 웹용, 돌 2.8만 삼각형 · 텍스처 2048 × 3장)
-- `src/basin-sim.js` — GPU 시뮬레이션: 물결(파동) + 2D 유체(색이 소용돌이치며 번짐) + 물감/거품. 품질 `?q=low|mid|high` (퀘스트 기본 mid)
-- `src/basin-water.js` — 수면 셰이더(물결 노멀 · 바닥 빛 무늬 · 물감 2겹 · 반사 · 거품 · 반짝이), 위 접시 물 · 물줄기 · 빛무리, 거품/물방울/반짝이 입자
-- `src/bath-bomb.js` — 배스밤(퐁당 → 떠서 빙글 녹으며 색 뿜기 → 물 전체가 뽀얗게), 프리셋 5종, 소리(Web Audio)
-- 조작: PC — 물 위를 끌어 젓기, 배스밤 고르고 `배스밤 넣기`(숫자 1~5 / 스페이스). VR — 검지 끝·컨트롤러 끝을 물에 넣어 젓기, 트리거·핀치하면 손에 배스밤 → 놓으면 떨어짐/던지기, 그립은 색 바꾸기
+수반 · 배스밤 시뮬레이터는 별도 저장소로 옮김: https://github.com/irangnam/gift-basin-xr
