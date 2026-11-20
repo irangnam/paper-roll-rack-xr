@@ -165,7 +165,7 @@ export class BasinSim {
     this.params = {
       velDiss: 0.9,        // 흐름이 잦아드는 빠르기
       dyeDiss: 0.025,       // 물감이 옅어지는 빠르기 (작을수록 오래 남음)
-      foamDiss: 2.6,        // 거품이 꺼지는 빠르기
+      foamDiss: 0.75,        // 거품이 꺼지는 빠르기
       curl: 5,             // 소용돌이 강조
       waveK: 0.24,          // 물결 퍼지는 빠르기 (0.5 미만)
       waveDamp: 0.986,      // 물결 감쇠
@@ -270,7 +270,7 @@ export class BasinSim {
     this._withGL(() => {
       // 넣기
       this._flush(this._queues.vel, V, [1500, 1500, 0, 0]);
-      this._flush(this._queues.dye, this.dye, [2.2, 2.2, 2.2, 1.5]);
+      this._flush(this._queues.dye, this.dye, [2.2, 2.2, 2.2, 1.0]);
       this._flush(this._queues.wave, this.wave, [0.2, 0.2, 0, 0]);
 
       // 물결 (프레임 속도와 상관없이 비슷한 빠르기)

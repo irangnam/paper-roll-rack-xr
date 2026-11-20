@@ -175,6 +175,19 @@ export class BathBombs {
   clear() { for (const b of this.list) this._remove(b); this.list.length = 0; }
   get fizz() { return this.list.reduce((m, b) => Math.max(m, b.state === 'float' ? this._rate(b) : 0), 0); }
 
+  /** 물 영역 밖으로 못 나가게: 테두리 · 뒷벽에 닿으면 바깥쪽 속도를 없애고 살짝 튕김 */
+  _keepInside(b, r) {
+    const sim = this.sim, p = b.mesh.position, lim = sim.radius - r - 0.012;
+    const dx = p.x - sim.center.x, dz = p.z - sim.center.z, d = Math.hypot(dx, dz);
+    if (d > lim) {
+      const nx = dx / d, nz = dz / d;
+      p.x = sim.center.x + nx * lim; p.z = sim.center.z + nz * lim;
+      const vn = b.vel.x * nx + b.vel.z * nz;
+      if (vn > 0) { b.vel.x -= nx * vn * 1.3; b.vel.z -= nz * vn * 1.3; }
+    }
+    const wz = sim.wallZ + r + 0.012;
+    if (p.z < wz) { p.z = wz; if (b.vel.z < 0) b.vel.z *= -0.3; }
+  }
   _rate(b) { return Math.pow(Math.max(0, 1 - b.prog), 0.65) * (0.75 + 0.25 * Math.sin(b.t * 5.3) * Math.sin(b.t * 2.1)); }
   _remove(b) { b.mesh.removeFromParent(); b.mesh.geometry.dispose(); b.mesh.material.dispose(); }
 
@@ -218,6 +231,7 @@ export class BathBombs {
       if (p.z < sim.wallZ + r + 0.03) b.vel.z += (sim.wallZ + r + 0.03 - p.z) * 8 * dt;
       b.vel.x *= Math.exp(-0.9 * dt); b.vel.z *= Math.exp(-0.9 * dt);
       p.addScaledVector(b.vel, dt);
+      this._keepInside(b, r);
       b.spinV = (b.spinV ?? 0) * Math.exp(-1.5 * dt); m.rotation.y += b.spin * dt * (0.08 + 0.12 * rate) + b.spinV * dt; m.rotation.x = 0.06 * Math.sin(b.t * 0.9); m.rotation.z = 0.06 * Math.cos(b.t * 0.7);
 
       // 물에 풀기: 소용돌이 없이 잔잔하게 바깥으로 번짐. 색은 시간 따라 바뀌어 동심원 띠 → 천천히 일렁여 마블 무늬
@@ -232,7 +246,9 @@ export class BathBombs {
         const amt = 0.065 * rate * f * (0.6 + 0.4 * Math.sin(b.t * 1.3 + k * 2.1));
         sim.addDye(ju, jv, ru * 0.8, col.r * amt, col.g * amt, col.b * amt, 0);
       }
-      sim.addDye(u.x, u.y, ru * 1.6, 0, 0, 0, 0.04 * rate * f);                 // 하얀 거품
+      sim.addDye(u.x, u.y, ru * 1.4, 0, 0, 0, 0.022 * rate * f);                 // 하얀 거품 (물에 남아 흐름 따라감)
+      // 배스밤이 움직이면 둘레 물을 조금 끌고 감 → 거품은 뒤처져 꼬리처럼 남음 (관성)
+      sim.addVel(u.x, u.y, ru * 1.6, sim.len(b.vel.x) * 0.3, sim.len(b.vel.z) * 0.3);
       for (let k = 0; k < 2; k++) {                                              // 보글보글 잔물결
         const a = Math.random() * Math.PI * 2, rr = ru * (1.1 + Math.random() * 0.6);
         sim.addWave(u.x + Math.cos(a) * rr, u.y + Math.sin(a) * rr, 0.006, (Math.random() - 0.3) * 0.0025 * rate);
