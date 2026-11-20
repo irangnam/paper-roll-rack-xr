@@ -25,10 +25,10 @@ uniform float uTime, uSlope, uMilk, uTintAmt, uMagicAmt, uGlow, uGlitter;
 uniform vec3 uTint, uMagic, uLightDir, uLightCol;
 uniform vec4 uBomb;   // xyz 위치, w 거품 꽃 세기
 uniform vec4 uFall;   // 물줄기 닿는 곳 xyz, w 반지름
+uniform sampler2D uFoamTex;
 uniform float uBombR;
 varying vec3 vW;
 ${NOISE}
-float fbmF(vec2 p) { return vnoise(p) * 0.55 + vnoise(p * 2.13 + 3.1) * 0.3 + vnoise(p * 4.37 + 7.7) * 0.15; }
 void main() {
   vec2 uv = ((vW.xz - uC.xz) / uR + 1.0) * 0.5;
   float rr = length(uv * 2.0 - 1.0);
@@ -64,13 +64,13 @@ void main() {
   body = mix(body, uTint, uTintAmt);
   // 번지는 물감
   float den2 = max(max(d2.r, d2.g), d2.b), den1 = max(max(d1.r, d1.g), d1.b);
-  vec3 pc2 = mix(d2.rgb / max(den2, 1e-3), vec3(0.97, 0.95, 1.0), 0.4);
+  vec3 pc2 = mix(d2.rgb / max(den2, 1e-3), vec3(0.98, 0.96, 0.95), 0.5);
   body = mix(body, pc2 * 0.88, (1.0 - exp(-den2 * 1.1)) * 0.8);
-  vec3 pc1 = mix(d1.rgb / max(den1, 1e-3), vec3(0.97, 0.95, 1.0), 0.34);
-  body = mix(body, pc1, (1.0 - exp(-den1 * 2.4)) * 0.94);
+  vec3 pc1 = mix(d1.rgb / max(den1, 1e-3), vec3(0.98, 0.96, 0.95), 0.45);
+  body = mix(body, pc1, (1.0 - exp(-den1 * 2.0)) * 0.85);
   // 마법 빛 (가운데 금빛 + 배스밤 색 반응)
-  body += vec3(1.0, 0.84, 0.52) * uGlow * depth * 0.22;
-  body += uMagic * uMagicAmt * (0.3 + 0.7 * depth) * 0.18;
+  body += vec3(1.0, 0.84, 0.52) * uGlow * depth * 0.07;
+  body += uMagic * uMagicAmt * depth * 0.03;
 
   // 따뜻한 방 반사
   vec3 Rf = reflect(-V, n);
@@ -94,26 +94,31 @@ void main() {
   vec2 fd = (Pxz - uFall.xz) / vec2(uFall.w * 1.6, uFall.w);
   float fz = smoothstep(1.0, 0.1, length(fd));
   float A = clamp(foam * 1.1 + fl + fz * 0.8, 0.0, 1.0);
-  if (A > 0.1) {
-    // 부피 거품: 높이 = 거품 양 × 몽글몽글한 덩어리 → 그 기울기로 빛을 받는 면 · 그늘진 틈
-    vec2 drift = vec2(t * 0.004, -t * 0.003);
-    float e = 0.0025;
-    float fx1 = texture2D(uDye, uv + vec2(e / (2.0 * uR), 0.0)).a, fz1 = texture2D(uDye, uv + vec2(0.0, e / (2.0 * uR))).a;
-    float Ax = clamp(fx1 * 1.1 + fl + fz * 0.8, 0.0, 1.0), Az = clamp(fz1 * 1.1 + fl + fz * 0.8, 0.0, 1.0);
-    float S = 30.0;
-    float H  = smoothstep(0.03, 0.95, A)  * (0.25 + 0.75 * fbmF(Pxz * S + drift));
-    float Hx = smoothstep(0.03, 0.95, Ax) * (0.25 + 0.75 * fbmF((Pxz + vec2(e, 0.0)) * S + drift));
-    float Hz = smoothstep(0.03, 0.95, Az) * (0.25 + 0.75 * fbmF((Pxz + vec2(0.0, e)) * S + drift));
-    vec3 Nf = normalize(vec3(-(Hx - H) * 9.0, 1.0, -(Hz - H) * 9.0));
-    float diff = 0.78 + 0.3 * max(dot(Nf, uLightDir), 0.0);
-    float wrap = 0.5 + 0.5 * dot(Nf, normalize(V + vec3(0.0, 0.6, 0.0)));
-    float ao = mix(0.8, 1.04, smoothstep(0.2, 0.6, H));
-    float micro = 0.95 + 0.05 * vnoise(Pxz * 420.0 + drift * 20.0);
-    vec3 fc = vec3(1.0, 0.985, 0.975) * diff * ao * micro * (0.88 + 0.12 * wrap);
-    fc = mix(fc, pc1, 0.25 * smoothstep(0.5, 0.25, H) * clamp(den1 + 0.2, 0.0, 1.0));   // 틈에는 물 색이 살짝
-    fc += uLightCol * pow(max(dot(Nf, normalize(uLightDir + V)), 0.0), 30.0) * 0.08;
-    float cov = smoothstep(0.22, 0.34, H);                       // 가장자리는 구름처럼 부드럽게 흩어짐
-    col = mix(col * (1.0 - 0.07 * smoothstep(0.1, 0.22, H)), fc, cov * 0.97);   // 거품 둘레 살짝 그늘
+  if (A > 0.02) {
+    // 텍스처 기포 두 겹 (작은 · 큰, 서로 돌려서 반복 티 안 나게), 아주 천천히 밀려감
+    vec2 drift = vec2(t * 0.0015, -t * 0.001);
+    vec2 q2 = mat2(0.8, -0.6, 0.6, 0.8) * Pxz;
+    vec4 f1 = texture2D(uFoamTex, Pxz * 7.5 + drift);
+    vec4 f2 = texture2D(uFoamTex, q2 * 3.4 + 0.37 - drift * 0.7);
+    float use2 = step(f1.b, f2.b * 0.92);
+    vec4 fs = mix(f1, f2, use2);
+    float h = max(f1.b, f2.b * 0.92);
+    // 두께: 얇으면 큰 기포 꼭대기만, 두꺼우면 빈틈없이
+    float T = A;
+    float thr = mix(0.8, -0.25, smoothstep(0.0, 0.85, T));
+    float cov = smoothstep(thr, thr + 0.1, h);
+    vec3 nb = normalize(vec3((fs.r * 2.0 - 1.0) * 1.4, 1.0, (fs.g * 2.0 - 1.0) * 1.4));
+    // 다중 산란: 회색 그늘 없이 늘 밝음. 틈은 물 색이 살짝 비친 크림색
+    float wrapL = 0.86 + 0.14 * dot(nb, uLightDir);
+    float crev = 1.0 - smoothstep(0.05, 0.4, h);
+    vec3 cream = mix(vec3(1.0, 0.975, 0.955), mix(vec3(1.0, 0.97, 0.95), pc1, 0.35), clamp(den1 * 1.5, 0.0, 1.0) * crev);
+    vec3 fc = cream * wrapL;
+    fc += uLightCol * pow(max(dot(nb, normalize(uLightDir + V)), 0.0), 90.0) * 0.28;   // 기포 표면 반짝
+    // 얇은 거품: 기포 가운데는 물이 비치고 테두리만 하얗게 → 두꺼울수록 불투명
+    float rim = 1.0 - nb.y;
+    float opaque = smoothstep(0.3, 0.75, T);
+    float alpha = mix(0.35 + 0.65 * smoothstep(0.05, 0.35, rim), 1.0, opaque);
+    col = mix(col, fc, cov * alpha * smoothstep(0.02, 0.12, T));
   }
   // 반짝이 (물감 짙은 곳)
   vec2 gc = floor(vW.xz * 460.0);
@@ -134,7 +139,7 @@ void main() {
   n.xz += 0.03 * vec2(sin(vW.x * 50.0 + t * 2.0), cos(vW.z * 46.0 - t * 1.7)); n = normalize(n);
   vec3 V = normalize(cameraPosition - vW);
   float fres = 0.03 + 0.97 * pow(1.0 - max(dot(n, V), 0.0), 5.0);
-  vec3 body = mix(vec3(0.62, 0.80, 0.74), uTint, uTintAmt * 0.8) + uMagic * uMagicAmt * 0.25;
+  vec3 body = mix(vec3(0.62, 0.80, 0.74), uTint, uTintAmt * 0.8) + uMagic * uMagicAmt * 0.04;
   vec3 Rf = reflect(-V, n);
   vec3 col = mix(body, mix(vec3(0.2, 0.12, 0.07), vec3(1.0, 0.84, 0.62), smoothstep(-0.1, 0.9, Rf.y)), fres * 0.8);
   col += uLightCol * pow(max(dot(n, normalize(uLightDir + V)), 0.0), 200.0) * 2.0;
@@ -144,13 +149,14 @@ void main() {
 
 const FALL_FRAG = /* glsl */`
 precision highp float;
-uniform float uTime, uMagicAmt, uTintAmt, uSurfY; uniform vec3 uMagic, uTint;
+uniform float uTime, uMagicAmt, uTintAmt, uSurfY, uCutY, uCutZ; uniform vec3 uMagic, uTint;
 varying vec3 vW;
 ${NOISE}
 void main() {
+  if (vW.y < uCutY || vW.z > uCutZ) discard;
   float s = vnoise(vec2((vW.x + vW.z) * 160.0, vW.y * 16.0 + uTime * 5.0)) * 0.65 + vnoise(vec2((vW.x - vW.z) * 60.0, vW.y * 6.0 + uTime * 3.0)) * 0.35;
   vec3 col = mix(vec3(0.62, 0.90, 0.92), vec3(1.0), smoothstep(0.45, 0.9, s));
-  col = mix(col, uTint, uTintAmt * 0.6) + uMagic * uMagicAmt * 0.2;
+  col = mix(col, uTint, uTintAmt * 0.6) + uMagic * uMagicAmt * 0.03;
   float low = 1.0 - smoothstep(0.0, 0.05, vW.y - uSurfY);            // 수면 가까울수록 하얗게 부서짐
   float n2 = vnoise(vec2((vW.x + vW.z) * 220.0, vW.y * 90.0 + uTime * 9.0));
   col = mix(col, vec3(1.0), low * 0.75);
@@ -174,7 +180,7 @@ void main() {
   float ang = atan(vW.z - uC.z, vW.x - uC.x);
   float rays = 0.55 + 0.45 * sin(ang * 13.0 + vW.y * 7.0 - uTime * 1.2) * sin(ang * 7.0 - uTime * 0.7 + 1.7);
   vec3 col = mix(vec3(1.0, 0.80, 0.48), uMagic, uMagicAmt);
-  gl_FragColor = vec4(col * a * rays * (0.18 + 0.45 * uBoost), 1.0);
+  gl_FragColor = vec4(col * a * rays * (0.07 + 0.12 * uBoost), 1.0);
 }`;
 
 const PT_VERT = /* glsl */`
@@ -205,6 +211,68 @@ void main() {
   }
   gl_FragColor = vec4(vCol, a * vA);
 }`;
+
+
+/**
+ * 거품 텍스처 (시작할 때 한 번 생성, 이어 붙여도 이음새 없음)
+ * 크기가 제각각인 둥근 기포를 서로 겹치지 않게 빽빽이 채운 높이 맵 → 노멀(RG) + 높이(B)
+ * 큰 기포 둘레를 잔기포가 채우는 실제 거품 구조
+ */
+export function makeFoamTexture(size = 512) {
+  const H = new Float32Array(size * size);
+  const placed = [];
+  let seed = 7; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const grid = new Map(), CELL = 40;
+  const key = (x, y) => `${Math.floor(x / CELL)},${Math.floor(y / CELL)}`;
+  const tryPlace = (r) => {
+    for (let k = 0; k < 30; k++) {
+      const x = rnd() * size, y = rnd() * size;
+      let ok = true;
+      for (let gx = -2; gx <= 2 && ok; gx++) for (let gy = -2; gy <= 2 && ok; gy++) {
+        const list = grid.get(key(x + gx * CELL, y + gy * CELL)); if (!list) continue;
+        for (const b of list) {
+          let dx = Math.abs(b.x - x); dx = Math.min(dx, size - dx);
+          let dy = Math.abs(b.y - y); dy = Math.min(dy, size - dy);
+          if (Math.hypot(dx, dy) < (b.r + r) * 0.93) { ok = false; break; }
+        }
+      }
+      if (ok) {
+        const b = { x, y, r }; placed.push(b);
+        const kk = key(((x % size) + size) % size, ((y % size) + size) % size);
+        // 경계 넘는 이웃 검사를 위해 감싼 위치에도 등록
+        for (const ox of [-size, 0, size]) for (const oy of [-size, 0, size]) {
+          const k2 = key(x + ox, y + oy); if (!grid.has(k2)) grid.set(k2, []); grid.get(k2).push(b);
+        }
+        return true;
+      }
+    }
+    return false;
+  };
+  for (const [r0, r1, n] of [[22, 30, 14], [12, 20, 70], [6, 11, 420], [3, 6, 2600], [1.6, 3, 6000]]) {
+    for (let i = 0; i < n; i++) tryPlace(r0 + (r1 - r0) * rnd());
+  }
+  for (const b of placed) {
+    const hmax = 0.35 + 0.65 * Math.sqrt(b.r / 30);
+    const r = b.r, x0 = Math.floor(b.x - r), x1 = Math.ceil(b.x + r), y0 = Math.floor(b.y - r), y1 = Math.ceil(b.y + r);
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+      const d2 = (x + 0.5 - b.x) ** 2 + (y + 0.5 - b.y) ** 2; if (d2 >= r * r) continue;
+      const h = hmax * Math.sqrt(1 - d2 / (r * r));
+      const i = (((y % size) + size) % size) * size + (((x % size) + size) % size);
+      if (h > H[i]) H[i] = h;
+    }
+  }
+  const data = new Uint8Array(size * size * 4);
+  const at = (x, y) => H[(((y % size) + size) % size) * size + (((x % size) + size) % size)];
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    const dx = (at(x + 1, y) - at(x - 1, y)) * 6, dy = (at(x, y + 1) - at(x, y - 1)) * 6;
+    const l = Math.hypot(dx, dy, 1), i = (y * size + x) * 4;
+    data[i] = (-dx / l * 0.5 + 0.5) * 255; data[i + 1] = (-dy / l * 0.5 + 0.5) * 255; data[i + 2] = at(x, y) * 255; data[i + 3] = 255;
+  }
+  const t = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter;
+  t.generateMipmaps = true; t.anisotropy = 4; t.needsUpdate = true;
+  return t;
+}
 
 /** CPU 로 움직이는 간단한 입자 묶음 */
 export class Particles {
@@ -287,7 +355,7 @@ export class BasinWaterFX {
         uC: { value: sim.center }, uR: { value: sim.radius }, uTime: { value: 0 }, uSlope: { value: 26 },
         uMilk: { value: 0 }, uTintAmt: { value: 0 }, uMagicAmt: { value: 0 }, uGlow: { value: 1 }, uGlitter: { value: 0.6 },
         uTint: { value: this.tint }, uMagic: { value: this.magic }, uLightDir: { value: lightDir }, uLightCol: { value: lightCol },
-        uBomb: { value: new THREE.Vector4() }, uBombR: { value: 0.03 }, uFall: { value: new THREE.Vector4(0, -9, 0, 0.03) },
+        uBomb: { value: new THREE.Vector4() }, uBombR: { value: 0.03 }, uFall: { value: new THREE.Vector4(0, -9, 0, 0.03) }, uFoamTex: { value: makeFoamTexture() },
       },
     });
     water.material = this.waterMat; water.renderOrder = 2;
@@ -309,7 +377,7 @@ export class BasinWaterFX {
     if (fall) {
       this.fallMat = new THREE.ShaderMaterial({
         vertexShader: WATER_VERT, fragmentShader: FALL_FRAG, transparent: true, depthWrite: false, side: THREE.DoubleSide,
-        uniforms: { uTime: { value: 0 }, uMagicAmt: { value: 0 }, uTintAmt: { value: 0 }, uSurfY: { value: this.surfaceY }, uMagic: { value: this.magic }, uTint: { value: this.tint } },
+        uniforms: { uTime: { value: 0 }, uMagicAmt: { value: 0 }, uTintAmt: { value: 0 }, uSurfY: { value: this.surfaceY }, uCutY: { value: -1e9 }, uCutZ: { value: 1e9 }, uMagic: { value: this.magic }, uTint: { value: this.tint } },
       });
       fall.material = this.fallMat; fall.renderOrder = 3;
       // 물줄기가 아래 수면에 닿는 곳 (가장 낮은 정점들의 평균)
@@ -318,8 +386,14 @@ export class BasinWaterFX {
       for (let i = 0; i < pos.count; i++) { v.fromBufferAttribute(pos, i).applyMatrix4(fall.matrixWorld); minY = Math.min(minY, v.y); }
       const acc = new THREE.Vector3(); let k = 0;
       for (let i = 0; i < pos.count; i++) { v.fromBufferAttribute(pos, i).applyMatrix4(fall.matrixWorld); if (v.y < minY + 0.01) { acc.add(v); k++; } }
-      this.fallPoint = acc.divideScalar(Math.max(1, k));
-      this.waterMat.uniforms.uFall.value.set(this.fallPoint.x, this.fallPoint.y, this.fallPoint.z, 0.032);
+      // 위 접시에서 아래 그릇으로 떨어지는 물 커튼은 없앰 (토출구 → 위 접시 물줄기만 남김)
+      if (upper) {
+        const ub = new THREE.Box3().setFromObject(upper);
+        this.fallMat.uniforms.uCutY.value = ub.max.y - 0.004;
+        const tip = new THREE.Vector3(); get('Basin_SpoutTip')?.getWorldPosition(tip);
+        this.fallMat.uniforms.uCutZ.value = tip.z + 0.045;   // 토출구 물줄기보다 앞(위 접시 가장자리 커튼)은 자름
+      }
+      this.fallPoint = null;
     }
 
     const halo = get('Basin_Halo');
@@ -385,11 +459,11 @@ export class BasinWaterFX {
       }
     }
     // 은은한 빛 알갱이 (늘)
-    if (Math.random() < dt * 5) {
+    if (Math.random() < dt * 1.5) {
       const a = Math.PI + Math.random() * Math.PI, r = Math.random() * sim.radius * 0.85;
       const col = S.magicAmt > 0.1 ? [this.magic.r, this.magic.g, this.magic.b] : [1, 0.82, 0.5];
       this.sparks.spawn(sim.center.x + Math.cos(a) * r, this.surfaceY + 0.02, sim.center.z - Math.sin(a) * r * 0.9 + 0.02,
-        0, 0.03 + Math.random() * 0.04, 0, { color: col, size: 0.004 + Math.random() * 0.004, life: 3 + Math.random() * 3, kind: 2 });
+        0, 0.03 + Math.random() * 0.04, 0, { color: [col[0] * 0.5, col[1] * 0.45, col[2] * 0.35], size: 0.003 + Math.random() * 0.003, life: 3 + Math.random() * 3, kind: 2 });
     }
     S.magicAmt = Math.max(0, S.magicAmt - dt * 0.12);
     S.boost = Math.max(0, S.boost - dt * 0.25);
