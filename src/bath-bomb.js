@@ -220,7 +220,7 @@ export class BathBombs {
         const amt = 0.065 * rate * f * (0.6 + 0.4 * Math.sin(b.t * 1.3 + k * 2.1));
         sim.addDye(ju, jv, ru * 0.8, col.r * amt, col.g * amt, col.b * amt, 0);
       }
-      sim.addDye(u.x, u.y, ru * 1.8, 0, 0, 0, 0.06 * rate * f);                 // 하얀 거품
+      sim.addDye(u.x, u.y, ru * 1.6, 0, 0, 0, 0.04 * rate * f);                 // 하얀 거품
       for (let k = 0; k < 2; k++) {                                              // 보글보글 잔물결
         const a = Math.random() * Math.PI * 2, rr = ru * (1.1 + Math.random() * 0.6);
         sim.addWave(u.x + Math.cos(a) * rr, u.y + Math.sin(a) * rr, 0.006, (Math.random() - 0.3) * 0.0025 * rate);
@@ -229,7 +229,7 @@ export class BathBombs {
       this.fx.setBomb(p, r, rate);
       this.fx.pulseMagic(b.avg, 0.25 + 0.4 * rate);
       // 입자: 거품 방울 · 위로 오르는 반짝이
-      const nb = Math.random() < rate * 0.6 ? 1 : 0;
+      const nb = Math.random() < rate * 0.25 ? 1 : 0;
       for (let k = 0; k < nb; k++) {
         const a = Math.random() * Math.PI * 2, rr = r * (0.9 + Math.random() * 0.8);
         this.fx.bubbles.spawn(p.x + Math.cos(a) * rr, Y + 0.002, p.z + Math.sin(a) * rr, Math.cos(a) * 0.012, 0.004, Math.sin(a) * 0.012,

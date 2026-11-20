@@ -28,22 +28,7 @@ uniform vec4 uFall;   // 물줄기 닿는 곳 xyz, w 반지름
 uniform float uBombR;
 varying vec3 vW;
 ${NOISE}
-vec2 hash22(vec2 p) { return vec2(hash12(p), hash12(p + 19.19)); }
-// 기포 한 겹: x = 덮임, y = 테두리 빛, z = 구멍(짙은 거품 사이로 물이 보이는 동그란 틈)
-vec3 bubbles(vec2 p, float amt) {
-  vec2 ip = floor(p), fp = fract(p); vec3 o3 = vec3(0.0);
-  for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
-    vec2 g = vec2(float(i), float(j)), c = ip + g;
-    vec2 r = g + hash22(c) * 0.8 + 0.1 - fp; float d = length(r);
-    float h = hash12(c + 5.7), rad = 0.32 + 0.42 * hash12(c + 2.3);
-    float on = step(h, amt);
-    float body = 1.0 - smoothstep(rad * 0.82, rad, d);
-    o3.x = max(o3.x, on * body);
-    o3.y = max(o3.y, on * smoothstep(rad * 0.5, rad * 0.85, d) * body);
-    o3.z = max(o3.z, (1.0 - on) * step(0.55, h) * (1.0 - smoothstep(rad * 0.45, rad * 0.62, d)));
-  }
-  return o3;
-}
+float fbmF(vec2 p) { return vnoise(p) * 0.55 + vnoise(p * 2.13 + 3.1) * 0.3 + vnoise(p * 4.37 + 7.7) * 0.15; }
 void main() {
   vec2 uv = ((vW.xz - uC.xz) / uR + 1.0) * 0.5;
   float rr = length(uv * 2.0 - 1.0);
@@ -81,7 +66,7 @@ void main() {
   float den2 = max(max(d2.r, d2.g), d2.b), den1 = max(max(d1.r, d1.g), d1.b);
   vec3 pc2 = mix(d2.rgb / max(den2, 1e-3), vec3(0.97, 0.95, 1.0), 0.4);
   body = mix(body, pc2 * 0.88, (1.0 - exp(-den2 * 1.1)) * 0.8);
-  vec3 pc1 = mix(d1.rgb / max(den1, 1e-3), vec3(0.97, 0.95, 1.0), 0.26);
+  vec3 pc1 = mix(d1.rgb / max(den1, 1e-3), vec3(0.97, 0.95, 1.0), 0.34);
   body = mix(body, pc1, (1.0 - exp(-den1 * 2.4)) * 0.94);
   // 마법 빛 (가운데 금빛 + 배스밤 색 반응)
   body += vec3(1.0, 0.84, 0.52) * uGlow * depth * 0.22;
@@ -97,30 +82,38 @@ void main() {
 
   // 거품
   float foam = clamp(texture2D(uDye, uv).a, 0.0, 1.0);
-  // 배스밤 둘레 거품 꽃 (방사형 결)
+  // 거품 양 (물감 a 채널 + 배스밤 둘레 + 물줄기 닿는 곳)
+  vec2 Pxz = vW.xz;
   float fl = 0.0;
   if (uBomb.w > 0.0) {
-    vec2 bd = vW.xz - uBomb.xz; float br = length(bd), ba = atan(bd.y, bd.x);
-    float streak = 0.5 + 0.5 * sin(ba * 46.0 + vnoise(vec2(ba * 9.0, t * 0.1)) * 6.0);
-    fl = smoothstep(uBombR * 0.85, uBombR * 1.1, br) * smoothstep(uBombR * (2.6 + 1.6 * uBomb.w), uBombR * 1.2, br) * uBomb.w;
-    fl *= 0.7 + 0.3 * mix(1.0, streak, smoothstep(uBombR * 1.2, uBombR * 2.2, br));
+    vec2 bd = Pxz - uBomb.xz; float br = length(bd), ba = atan(bd.y, bd.x);
+    float streak = 0.5 + 0.5 * sin(ba * 40.0 + vnoise(vec2(ba * 8.0, t * 0.1)) * 6.0);
+    fl = smoothstep(uBombR * 0.8, uBombR * 1.05, br) * smoothstep(uBombR * (2.3 + 1.0 * uBomb.w), uBombR * 1.1, br) * uBomb.w;
+    fl *= 0.8 + 0.2 * mix(1.0, streak, smoothstep(uBombR * 1.3, uBombR * 2.4, br));
   }
-  // 물줄기 떨어지는 곳: 늘 하얗게 일렁이는 거품
-  vec2 fd = (vW.xz - uFall.xz) / vec2(uFall.w * 1.6, uFall.w);
-  float fz = smoothstep(1.0, 0.15, length(fd)) * (0.75 + 0.25 * vnoise(vW.xz * 60.0 + vec2(0.0, t * 1.5)));
-  float A = clamp(foam * 1.25 + fl * 1.3 + fz, 0.0, 1.0);
-  if (A > 0.01) {
-    vec2 drift = vec2(t * 0.004, t * 0.003);
-    vec3 b1 = bubbles(vW.xz * 240.0 + drift, A);
-    vec3 b2 = bubbles(vW.xz * 105.0 + 7.0 - drift, A * 0.85);
-    float solid = smoothstep(0.42, 0.9, A);
-    float holes = max(b1.z, b2.z * 0.8) * solid;
-    float cov = max(max(b1.x, b2.x * 0.95), solid * (1.0 - holes));
-    vec3 fc = vec3(0.985, 0.97, 0.975) * (0.9 + 0.1 * max(b1.y, b2.y));
-    fc = mix(fc, pc1, 0.14 * clamp(den1, 0.0, 1.0));
-    fc += uLightCol * pow(max(b1.y, b2.y), 6.0) * 0.12;
-    col = mix(col, fc, cov * 0.94);
-    col = mix(col, pc1 * 0.72, holes * 0.45 * (1.0 - smoothstep(0.0, 0.2, 1.0 - den1)));
+  vec2 fd = (Pxz - uFall.xz) / vec2(uFall.w * 1.6, uFall.w);
+  float fz = smoothstep(1.0, 0.1, length(fd));
+  float A = clamp(foam * 1.1 + fl + fz * 0.8, 0.0, 1.0);
+  if (A > 0.1) {
+    // 부피 거품: 높이 = 거품 양 × 몽글몽글한 덩어리 → 그 기울기로 빛을 받는 면 · 그늘진 틈
+    vec2 drift = vec2(t * 0.004, -t * 0.003);
+    float e = 0.0025;
+    float fx1 = texture2D(uDye, uv + vec2(e / (2.0 * uR), 0.0)).a, fz1 = texture2D(uDye, uv + vec2(0.0, e / (2.0 * uR))).a;
+    float Ax = clamp(fx1 * 1.1 + fl + fz * 0.8, 0.0, 1.0), Az = clamp(fz1 * 1.1 + fl + fz * 0.8, 0.0, 1.0);
+    float S = 30.0;
+    float H  = smoothstep(0.03, 0.95, A)  * (0.25 + 0.75 * fbmF(Pxz * S + drift));
+    float Hx = smoothstep(0.03, 0.95, Ax) * (0.25 + 0.75 * fbmF((Pxz + vec2(e, 0.0)) * S + drift));
+    float Hz = smoothstep(0.03, 0.95, Az) * (0.25 + 0.75 * fbmF((Pxz + vec2(0.0, e)) * S + drift));
+    vec3 Nf = normalize(vec3(-(Hx - H) * 9.0, 1.0, -(Hz - H) * 9.0));
+    float diff = 0.78 + 0.3 * max(dot(Nf, uLightDir), 0.0);
+    float wrap = 0.5 + 0.5 * dot(Nf, normalize(V + vec3(0.0, 0.6, 0.0)));
+    float ao = mix(0.8, 1.04, smoothstep(0.2, 0.6, H));
+    float micro = 0.95 + 0.05 * vnoise(Pxz * 420.0 + drift * 20.0);
+    vec3 fc = vec3(1.0, 0.985, 0.975) * diff * ao * micro * (0.88 + 0.12 * wrap);
+    fc = mix(fc, pc1, 0.25 * smoothstep(0.5, 0.25, H) * clamp(den1 + 0.2, 0.0, 1.0));   // 틈에는 물 색이 살짝
+    fc += uLightCol * pow(max(dot(Nf, normalize(uLightDir + V)), 0.0), 30.0) * 0.08;
+    float cov = smoothstep(0.22, 0.34, H);                       // 가장자리는 구름처럼 부드럽게 흩어짐
+    col = mix(col * (1.0 - 0.07 * smoothstep(0.1, 0.22, H)), fc, cov * 0.97);   // 거품 둘레 살짝 그늘
   }
   // 반짝이 (물감 짙은 곳)
   vec2 gc = floor(vW.xz * 460.0);
@@ -202,7 +195,9 @@ void main() {
   if (r > 1.0) discard;
   float a;
   if (vKind < 0.5) {            // 거품: 고리 + 빛점
-    a = smoothstep(1.0, 0.82, r) * (0.25 + 0.75 * smoothstep(0.55, 0.85, r)) + 0.8 * smoothstep(0.35, 0.0, length(p - vec2(-0.35, 0.35)));
+    float z = sqrt(max(0.0, 1.0 - r * r));
+    gl_FragColor = vec4(vCol * (0.78 + 0.22 * z + 0.25 * smoothstep(0.45, 0.0, length(p - vec2(-0.35, 0.4)))), smoothstep(1.0, 0.8, r) * vA);
+    return;
   } else if (vKind < 1.5) {     // 물방울
     a = smoothstep(1.0, 0.5, r) + 0.6 * smoothstep(0.4, 0.0, length(p - vec2(-0.3, 0.3)));
   } else {                      // 반짝이 · 빛 알갱이 (더하기)
