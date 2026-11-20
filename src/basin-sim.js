@@ -163,10 +163,10 @@ export class BasinSim {
     this.renderer = renderer;
     this.center = o.center.clone(); this.radius = o.radius; this.wallZ = o.wallZ;
     this.params = {
-      velDiss: 0.35,        // 흐름이 잦아드는 빠르기
-      dyeDiss: 0.045,       // 물감이 옅어지는 빠르기 (작을수록 오래 남음)
-      foamDiss: 1.8,        // 거품이 꺼지는 빠르기
-      curl: 30,             // 소용돌이 강조
+      velDiss: 0.9,        // 흐름이 잦아드는 빠르기
+      dyeDiss: 0.025,       // 물감이 옅어지는 빠르기 (작을수록 오래 남음)
+      foamDiss: 2.6,        // 거품이 꺼지는 빠르기
+      curl: 5,             // 소용돌이 강조
       waveK: 0.24,          // 물결 퍼지는 빠르기 (0.5 미만)
       waveDamp: 0.986,      // 물결 감쇠
     };

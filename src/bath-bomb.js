@@ -16,7 +16,7 @@ export const BOMB_PRESETS = [
 
 export const BOMB = {
   radius: 0.034,        // m (지름 약 7cm)
-  duration: 16,         // 다 녹는 데 걸리는 초
+  duration: 30,         // 다 녹는 데 걸리는 초 (천천히 풀어짐)
 };
 
 // ---------------------------------------------------------------- 녹는 셰이더 (MeshStandardMaterial 확장)
@@ -28,26 +28,31 @@ float vn3(vec3 p) { vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f)
 
 function makeBombMaterial(preset) {
   const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.93, metalness: 0 });
-  m.userData.u = { uDis: { value: 0 }, uEdge: { value: new THREE.Color(preset.dye[0]) }, uFizz: { value: 0 } };
+  m.userData.u = { uDis: { value: 0 }, uEdge: { value: new THREE.Color(preset.dye[0]) }, uFizz: { value: 0 }, uSpeck: { value: new THREE.Color(preset.speck) } };
   m.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, m.userData.u);
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vLP;')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvLP = position;');
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', `#include <common>\nvarying vec3 vLP;\nuniform float uDis, uFizz;\nuniform vec3 uEdge;\n${N3}`)
+      .replace('#include <common>', `#include <common>\nvarying vec3 vLP;\nuniform float uDis, uFizz;\nuniform vec3 uEdge, uSpeck;\n${N3}`)
       .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
         float dn = vn3(vLP * 95.0) * 0.55 + vn3(vLP * 32.0) * 0.45;
         if (dn < uDis) discard;`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        float gr = vn3(vLP * 420.0);
+        diffuseColor.rgb *= 0.9 + 0.16 * gr;                                   // 가루 결
+        diffuseColor.rgb = mix(diffuseColor.rgb, uSpeck, smoothstep(0.80, 0.86, vn3(vLP * 520.0 + 3.0)));   // 알갱이
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0), smoothstep(0.88, 0.92, vn3(vLP * 700.0 + 11.0)) * 0.6);`)
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-        totalEmissiveRadiance += uEdge * (smoothstep(0.08, 0.0, dn - uDis) * step(0.002, uDis) * 1.6 + uFizz * 0.12);`);
+        totalEmissiveRadiance += uEdge * (smoothstep(0.06, 0.0, dn - uDis) * step(0.002, uDis) * 0.9 + uFizz * 0.06);`);
   };
   m.customProgramCacheKey = () => 'bathbomb';
   return m;
 }
 
 function makeBombGeometry(preset, seed) {
-  const g = new THREE.IcosahedronGeometry(BOMB.radius, 4);
+  const g = new THREE.IcosahedronGeometry(BOMB.radius, 5);
   const pos = g.attributes.position, v = new THREE.Vector3();
   const shell = new THREE.Color(preset.shell), speck = new THREE.Color(preset.speck), col = new Float32Array(pos.count * 3);
   let s = seed * 9301 + 49297; const rnd = () => ((s = (s * 9301 + 49297) % 233280) / 233280);
@@ -60,8 +65,7 @@ function makeBombGeometry(preset, seed) {
     const seam = -0.025 * Math.exp(-((v.y / 0.05) ** 2));
     v.multiplyScalar(BOMB.radius * (1 + bump + seam));
     pos.setXYZ(i, v.x, v.y, v.z);
-    c.copy(shell).multiplyScalar(0.92 + rnd() * 0.12);
-    if (rnd() < 0.09) c.copy(speck);
+    c.copy(shell).multiplyScalar(0.97 + 0.04 * Math.sin(v.y * 9 + ph[0]));
     col.set([c.r, c.g, c.b], i * 3);
   }
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
@@ -195,45 +199,46 @@ export class BathBombs {
       // 물 위 둥실 + 떠다님 (벽 · 테두리 피함)
       const p = m.position;
       b.vel.y += ((Y - r * 0.15 + 0.003 * Math.sin(b.t * 3.1)) - p.y) * 60 * dt; b.vel.y *= Math.exp(-6 * dt);
-      b.wander.x += (Math.random() - 0.5) * dt * 0.25; b.wander.y += (Math.random() - 0.5) * dt * 0.25; b.wander.multiplyScalar(Math.exp(-1.2 * dt));
+      b.wander.x += (Math.random() - 0.5) * dt * 0.06; b.wander.y += (Math.random() - 0.5) * dt * 0.06; b.wander.multiplyScalar(Math.exp(-1.2 * dt));
       b.vel.x += b.wander.x * dt; b.vel.z += b.wander.y * dt;
       const dx = p.x - sim.center.x, dz = p.z - sim.center.z, d = Math.hypot(dx, dz), lim = sim.radius - r - 0.03;
       if (d > lim) { b.vel.x -= dx / d * (d - lim) * 8 * dt; b.vel.z -= dz / d * (d - lim) * 8 * dt; }
       if (p.z < sim.wallZ + r + 0.03) b.vel.z += (sim.wallZ + r + 0.03 - p.z) * 8 * dt;
       b.vel.x *= Math.exp(-1.5 * dt); b.vel.z *= Math.exp(-1.5 * dt);
       p.addScaledVector(b.vel, dt);
-      m.rotation.y += b.spin * dt * (0.9 + 1.6 * rate); m.rotation.x = 0.15 * Math.sin(b.t * 1.7); m.rotation.z = 0.15 * Math.cos(b.t * 1.3);
+      m.rotation.y += b.spin * dt * (0.08 + 0.12 * rate); m.rotation.x = 0.06 * Math.sin(b.t * 0.9); m.rotation.z = 0.06 * Math.cos(b.t * 0.7);
 
-      // 물에 뿜기: 바깥으로 + 빙글, 회전하는 팔 3개에서 색
-      const u = sim.toUv(p.x, p.z, _u), ru = sim.len(r);
-      sim.addSwirl(u.x, u.y, ru * 2.2, 0.22 * rate, 0.30 * rate * b.spin);
-      const arms = 3, f = dt * 60;
-      for (let k = 0; k < arms; k++) {
-        const a = b.t * 1.6 * b.spin + (k / arms) * Math.PI * 2;
-        const cx = Math.cos(a), cz = Math.sin(a);
-        const ju = u.x + cx * ru * 1.25, jv = u.y + cz * ru * 1.25;
-        sim.addVel(ju, jv, ru * 0.9, (cx * 0.6 - cz * 0.8 * b.spin) * 0.75 * rate, (cz * 0.6 + cx * 0.8 * b.spin) * 0.75 * rate);
-        const c = b.dye[(k + Math.floor(b.t * 0.7)) % b.dye.length];
-        sim.addDye(ju, jv, ru * 0.75, c.r * 0.055 * rate * f, c.g * 0.055 * rate * f, c.b * 0.055 * rate * f, 0);
+      // 물에 풀기: 소용돌이 없이 잔잔하게 바깥으로 번짐. 색은 시간 따라 바뀌어 동심원 띠 → 천천히 일렁여 마블 무늬
+      const u = sim.toUv(p.x, p.z, _u), ru = sim.len(r), f = dt * 60;
+      sim.addSwirl(u.x, u.y, ru * 4.0, 0.11 * rate, 0.004 * b.spin);
+      const band = b.t / 4.5, ci = Math.floor(band) % b.dye.length, cn = (ci + 1) % b.dye.length, w = band % 1;
+      const col = _c2.copy(b.dye[ci]).lerp(b.dye[cn], Math.min(1, Math.max(0, (w - 0.7) / 0.3)));
+      const ring = 7;
+      for (let k = 0; k < ring; k++) {
+        const a = b.t * 0.12 * b.spin + (k / ring) * Math.PI * 2 + Math.sin(b.t * 0.7 + k) * 0.25;
+        const ju = u.x + Math.cos(a) * ru * 1.35, jv = u.y + Math.sin(a) * ru * 1.35;
+        const amt = 0.065 * rate * f * (0.6 + 0.4 * Math.sin(b.t * 1.3 + k * 2.1));
+        sim.addDye(ju, jv, ru * 0.8, col.r * amt, col.g * amt, col.b * amt, 0);
       }
-      sim.addDye(u.x, u.y, ru * 1.4, 0, 0, 0, 0.05 * rate * f);                 // 거품
+      sim.addDye(u.x, u.y, ru * 1.8, 0, 0, 0, 0.06 * rate * f);                 // 하얀 거품
       for (let k = 0; k < 2; k++) {                                              // 보글보글 잔물결
         const a = Math.random() * Math.PI * 2, rr = ru * (1.1 + Math.random() * 0.6);
-        sim.addWave(u.x + Math.cos(a) * rr, u.y + Math.sin(a) * rr, 0.006, (Math.random() - 0.3) * 0.006 * rate);
+        sim.addWave(u.x + Math.cos(a) * rr, u.y + Math.sin(a) * rr, 0.006, (Math.random() - 0.3) * 0.0025 * rate);
       }
-      this.fx.addTint(b.avg, dt * 0.028 * rate);
-      this.fx.pulseMagic(b.avg, 0.35 + 0.65 * rate);
+      this.fx.addTint(b.avg, dt * 0.02 * rate);
+      this.fx.setBomb(p, r, rate);
+      this.fx.pulseMagic(b.avg, 0.25 + 0.4 * rate);
       // 입자: 거품 방울 · 위로 오르는 반짝이
-      const nb = Math.random() < rate ? 2 : 0;
+      const nb = Math.random() < rate * 0.6 ? 1 : 0;
       for (let k = 0; k < nb; k++) {
         const a = Math.random() * Math.PI * 2, rr = r * (0.9 + Math.random() * 0.8);
-        this.fx.bubbles.spawn(p.x + Math.cos(a) * rr, Y + 0.002, p.z + Math.sin(a) * rr, Math.cos(a) * 0.04, 0.01, Math.sin(a) * 0.04,
+        this.fx.bubbles.spawn(p.x + Math.cos(a) * rr, Y + 0.002, p.z + Math.sin(a) * rr, Math.cos(a) * 0.012, 0.004, Math.sin(a) * 0.012,
           { size: 0.003 + Math.random() * 0.005, life: 0.4 + Math.random() * 0.8, kind: 0, drag: 2 });
       }
-      if (Math.random() < rate * dt * 14) {
+      if (Math.random() < rate * dt * 6) {
         const c = b.dye[Math.floor(Math.random() * b.dye.length)];
         this.fx.sparks.spawn(p.x + (Math.random() - 0.5) * r, Y + 0.01, p.z + (Math.random() - 0.5) * r,
-          (Math.random() - 0.5) * 0.03, 0.06 + Math.random() * 0.08, (Math.random() - 0.5) * 0.03,
+          (Math.random() - 0.5) * 0.015, 0.03 + Math.random() * 0.04, (Math.random() - 0.5) * 0.015,
           { color: [c.r * 0.6 + 0.4, c.g * 0.6 + 0.4, c.b * 0.6 + 0.4], size: 0.005 + Math.random() * 0.006, life: 2 + Math.random() * 2.5, kind: 2 });
       }
       if (this.light) { this.light.color.lerp(b.avg, 0.05); }
@@ -244,6 +249,7 @@ export class BathBombs {
       this.light.intensity = 0.1 + 0.6 * a * (0.85 + 0.15 * Math.sin(this.time * 7));
       if (a < 0.05) this.light.color.lerp(_c.set(1, 0.8, 0.5), 0.02);
     }
+    if (!this.list.some((b) => b.state === 'float')) this.fx.setBomb(null);
     this.audio?.update(this.fizz, this.time);
   }
 
@@ -256,9 +262,9 @@ export class BathBombs {
     const speed = Math.min(4, Math.abs(b.vel.y) + 0.5);
     b.state = 'float'; b.t = 0; b.vel.set(b.vel.x * 0.25, -speed * 0.15, b.vel.z * 0.25);
     const u = sim.toUv(m.position.x, m.position.z, _u), ru = sim.len(BOMB.radius);
-    sim.addWave(u.x, u.y, ru * 1.6, -0.09 * Math.min(1.5, speed / 2));
-    sim.addSwirl(u.x, u.y, ru * 3, 0.9, 0.3 * b.spin);
-    const c = b.dye[0]; sim.addDye(u.x, u.y, ru * 2.0, c.r * 0.9, c.g * 0.9, c.b * 0.9, 0.35);
+    sim.addWave(u.x, u.y, ru * 1.6, -0.05 * Math.min(1.5, speed / 2));
+    sim.addSwirl(u.x, u.y, ru * 3, 0.18, 0);
+    const c = b.dye[0]; sim.addDye(u.x, u.y, ru * 1.6, c.r * 0.5, c.g * 0.5, c.b * 0.5, 0.5);
     for (let k = 0; k < 22; k++) {
       const a = Math.random() * Math.PI * 2, s = 0.25 + Math.random() * 0.55 * Math.min(1.5, speed / 2);
       fx.bubbles.spawn(m.position.x + Math.cos(a) * 0.02, Y + 0.01, m.position.z + Math.sin(a) * 0.02,
@@ -270,4 +276,4 @@ export class BathBombs {
     this.onHaptic?.(0.6, 60);
   }
 }
-const _c = new THREE.Color();
+const _c = new THREE.Color(), _c2 = new THREE.Color();

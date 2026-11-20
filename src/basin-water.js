@@ -23,8 +23,27 @@ uniform vec2 uWaveT;
 uniform vec3 uC; uniform float uR;
 uniform float uTime, uSlope, uMilk, uTintAmt, uMagicAmt, uGlow, uGlitter;
 uniform vec3 uTint, uMagic, uLightDir, uLightCol;
+uniform vec4 uBomb;   // xyz 위치, w 거품 꽃 세기
+uniform vec4 uFall;   // 물줄기 닿는 곳 xyz, w 반지름
+uniform float uBombR;
 varying vec3 vW;
 ${NOISE}
+vec2 hash22(vec2 p) { return vec2(hash12(p), hash12(p + 19.19)); }
+// 기포 한 겹: x = 덮임, y = 테두리 빛, z = 구멍(짙은 거품 사이로 물이 보이는 동그란 틈)
+vec3 bubbles(vec2 p, float amt) {
+  vec2 ip = floor(p), fp = fract(p); vec3 o3 = vec3(0.0);
+  for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+    vec2 g = vec2(float(i), float(j)), c = ip + g;
+    vec2 r = g + hash22(c) * 0.8 + 0.1 - fp; float d = length(r);
+    float h = hash12(c + 5.7), rad = 0.32 + 0.42 * hash12(c + 2.3);
+    float on = step(h, amt);
+    float body = 1.0 - smoothstep(rad * 0.82, rad, d);
+    o3.x = max(o3.x, on * body);
+    o3.y = max(o3.y, on * smoothstep(rad * 0.5, rad * 0.85, d) * body);
+    o3.z = max(o3.z, (1.0 - on) * step(0.55, h) * (1.0 - smoothstep(rad * 0.45, rad * 0.62, d)));
+  }
+  return o3;
+}
 void main() {
   vec2 uv = ((vW.xz - uC.xz) / uR + 1.0) * 0.5;
   float rr = length(uv * 2.0 - 1.0);
@@ -60,8 +79,10 @@ void main() {
   body = mix(body, uTint, uTintAmt);
   // 번지는 물감
   float den2 = max(max(d2.r, d2.g), d2.b), den1 = max(max(d1.r, d1.g), d1.b);
-  body = mix(body, d2.rgb / max(den2, 1e-3) * 0.8, (1.0 - exp(-den2 * 1.1)) * 0.8);
-  body = mix(body, d1.rgb / max(den1, 1e-3), (1.0 - exp(-den1 * 1.7)) * 0.92);
+  vec3 pc2 = mix(d2.rgb / max(den2, 1e-3), vec3(0.97, 0.95, 1.0), 0.4);
+  body = mix(body, pc2 * 0.88, (1.0 - exp(-den2 * 1.1)) * 0.8);
+  vec3 pc1 = mix(d1.rgb / max(den1, 1e-3), vec3(0.97, 0.95, 1.0), 0.26);
+  body = mix(body, pc1, (1.0 - exp(-den1 * 2.4)) * 0.94);
   // 마법 빛 (가운데 금빛 + 배스밤 색 반응)
   body += vec3(1.0, 0.84, 0.52) * uGlow * depth * 0.22;
   body += uMagic * uMagicAmt * (0.3 + 0.7 * depth) * 0.18;
@@ -76,11 +97,31 @@ void main() {
 
   // 거품
   float foam = clamp(texture2D(uDye, uv).a, 0.0, 1.0);
-  float bub = 0.7 + 0.3 * vnoise(vW.xz * 170.0 + t * 0.3);
-  col = mix(col, vec3(1.0, 0.97, 0.94), smoothstep(0.06, 0.8, foam) * bub * 0.6);
-  // 물감 결 (마블 무늬): 농도 차이가 있는 곳을 살짝 밝게/어둡게
-  float dd = texture2D(uDye, uv + vec2(0.006, 0.0)).r + texture2D(uDye, uv + vec2(0.0, 0.006)).g - d1.r - d1.g;
-  col *= 1.0 + clamp(dd * 2.5, -0.18, 0.18);
+  // 배스밤 둘레 거품 꽃 (방사형 결)
+  float fl = 0.0;
+  if (uBomb.w > 0.0) {
+    vec2 bd = vW.xz - uBomb.xz; float br = length(bd), ba = atan(bd.y, bd.x);
+    float streak = 0.5 + 0.5 * sin(ba * 46.0 + vnoise(vec2(ba * 9.0, t * 0.1)) * 6.0);
+    fl = smoothstep(uBombR * 0.85, uBombR * 1.1, br) * smoothstep(uBombR * (2.6 + 1.6 * uBomb.w), uBombR * 1.2, br) * uBomb.w;
+    fl *= 0.7 + 0.3 * mix(1.0, streak, smoothstep(uBombR * 1.2, uBombR * 2.2, br));
+  }
+  // 물줄기 떨어지는 곳: 늘 하얗게 일렁이는 거품
+  vec2 fd = (vW.xz - uFall.xz) / vec2(uFall.w * 1.6, uFall.w);
+  float fz = smoothstep(1.0, 0.15, length(fd)) * (0.75 + 0.25 * vnoise(vW.xz * 60.0 + vec2(0.0, t * 1.5)));
+  float A = clamp(foam * 1.25 + fl * 1.3 + fz, 0.0, 1.0);
+  if (A > 0.01) {
+    vec2 drift = vec2(t * 0.004, t * 0.003);
+    vec3 b1 = bubbles(vW.xz * 240.0 + drift, A);
+    vec3 b2 = bubbles(vW.xz * 105.0 + 7.0 - drift, A * 0.85);
+    float solid = smoothstep(0.42, 0.9, A);
+    float holes = max(b1.z, b2.z * 0.8) * solid;
+    float cov = max(max(b1.x, b2.x * 0.95), solid * (1.0 - holes));
+    vec3 fc = vec3(0.985, 0.97, 0.975) * (0.9 + 0.1 * max(b1.y, b2.y));
+    fc = mix(fc, pc1, 0.14 * clamp(den1, 0.0, 1.0));
+    fc += uLightCol * pow(max(b1.y, b2.y), 6.0) * 0.12;
+    col = mix(col, fc, cov * 0.94);
+    col = mix(col, pc1 * 0.72, holes * 0.45 * (1.0 - smoothstep(0.0, 0.2, 1.0 - den1)));
+  }
   // 반짝이 (물감 짙은 곳)
   vec2 gc = floor(vW.xz * 460.0);
   float gh = hash12(gc + floor(t * 5.0 + hash12(gc) * 7.0));
@@ -110,14 +151,19 @@ void main() {
 
 const FALL_FRAG = /* glsl */`
 precision highp float;
-uniform float uTime, uMagicAmt, uTintAmt; uniform vec3 uMagic, uTint;
+uniform float uTime, uMagicAmt, uTintAmt, uSurfY; uniform vec3 uMagic, uTint;
 varying vec3 vW;
 ${NOISE}
 void main() {
   float s = vnoise(vec2((vW.x + vW.z) * 160.0, vW.y * 16.0 + uTime * 5.0)) * 0.65 + vnoise(vec2((vW.x - vW.z) * 60.0, vW.y * 6.0 + uTime * 3.0)) * 0.35;
   vec3 col = mix(vec3(0.62, 0.90, 0.92), vec3(1.0), smoothstep(0.45, 0.9, s));
   col = mix(col, uTint, uTintAmt * 0.6) + uMagic * uMagicAmt * 0.2;
-  gl_FragColor = vec4(col, 0.18 + 0.4 * smoothstep(0.25, 0.85, s));
+  float low = 1.0 - smoothstep(0.0, 0.05, vW.y - uSurfY);            // 수면 가까울수록 하얗게 부서짐
+  float n2 = vnoise(vec2((vW.x + vW.z) * 220.0, vW.y * 90.0 + uTime * 9.0));
+  col = mix(col, vec3(1.0), low * 0.75);
+  float a = 0.18 + 0.4 * smoothstep(0.25, 0.85, s);
+  a = mix(a, 0.55 + 0.4 * n2, low * 0.8) * smoothstep(-0.004, 0.012, vW.y - uSurfY + n2 * 0.006);
+  gl_FragColor = vec4(col, a);
 }`;
 
 const HALO_VERT = /* glsl */`
@@ -246,6 +292,7 @@ export class BasinWaterFX {
         uC: { value: sim.center }, uR: { value: sim.radius }, uTime: { value: 0 }, uSlope: { value: 26 },
         uMilk: { value: 0 }, uTintAmt: { value: 0 }, uMagicAmt: { value: 0 }, uGlow: { value: 1 }, uGlitter: { value: 0.6 },
         uTint: { value: this.tint }, uMagic: { value: this.magic }, uLightDir: { value: lightDir }, uLightCol: { value: lightCol },
+        uBomb: { value: new THREE.Vector4() }, uBombR: { value: 0.03 }, uFall: { value: new THREE.Vector4(0, -9, 0, 0.03) },
       },
     });
     water.material = this.waterMat; water.renderOrder = 2;
@@ -267,7 +314,7 @@ export class BasinWaterFX {
     if (fall) {
       this.fallMat = new THREE.ShaderMaterial({
         vertexShader: WATER_VERT, fragmentShader: FALL_FRAG, transparent: true, depthWrite: false, side: THREE.DoubleSide,
-        uniforms: { uTime: { value: 0 }, uMagicAmt: { value: 0 }, uTintAmt: { value: 0 }, uMagic: { value: this.magic }, uTint: { value: this.tint } },
+        uniforms: { uTime: { value: 0 }, uMagicAmt: { value: 0 }, uTintAmt: { value: 0 }, uSurfY: { value: this.surfaceY }, uMagic: { value: this.magic }, uTint: { value: this.tint } },
       });
       fall.material = this.fallMat; fall.renderOrder = 3;
       // 물줄기가 아래 수면에 닿는 곳 (가장 낮은 정점들의 평균)
@@ -277,6 +324,7 @@ export class BasinWaterFX {
       const acc = new THREE.Vector3(); let k = 0;
       for (let i = 0; i < pos.count; i++) { v.fromBufferAttribute(pos, i).applyMatrix4(fall.matrixWorld); if (v.y < minY + 0.01) { acc.add(v); k++; } }
       this.fallPoint = acc.divideScalar(Math.max(1, k));
+      this.waterMat.uniforms.uFall.value.set(this.fallPoint.x, this.fallPoint.y, this.fallPoint.z, 0.032);
     }
 
     const halo = get('Basin_Halo');
@@ -312,7 +360,14 @@ export class BasinWaterFX {
     this.state.magicAmt = Math.min(1, Math.max(this.state.magicAmt, amt));
     this.state.boost = Math.min(1.2, Math.max(this.state.boost, amt));
   }
-  reset() { Object.assign(this.state, { magicAmt: 0, tintAmt: 0, milk: 0, boost: 0 }); }
+  /** 녹는 중인 배스밤 (거품 꽃 위치). null 이면 끔 */
+  setBomb(p, r = 0.03, rate = 1) {
+    const U = this.waterMat.uniforms;
+    if (!p) { U.uBomb.value.w = Math.max(0, U.uBomb.value.w - 0.02); return; }
+    U.uBomb.value.set(p.x, p.y, p.z, Math.min(1, U.uBomb.value.w + 0.03)); U.uBombR.value = r;
+  }
+  reset() { this.waterMat.uniforms.uBomb.value.w = 0;
+    Object.assign(this.state, { magicAmt: 0, tintAmt: 0, milk: 0, boost: 0 }); }
 
   update(dt, renderer) {
     this.time += dt; const t = this.time, S = this.state, sim = this.sim;
@@ -320,12 +375,18 @@ export class BasinWaterFX {
     if (this.fallPoint) {
       const u = sim.toUv(this.fallPoint.x, this.fallPoint.z, this._u);
       sim.addWave(u.x + (Math.random() - 0.5) * 0.01, u.y + (Math.random() - 0.5) * 0.01, 0.012, -0.012 * (0.6 + Math.random() * 0.8));
-      if (Math.random() < 0.5) sim.addVel(u.x, u.y, 0.05, 0, 0.12);
-      sim.addDye(u.x, u.y, 0.02, 0, 0, 0, 0.05 * dt * 60);
+      if (Math.random() < 0.5) sim.addVel(u.x, u.y, 0.05, 0, 0.05);
+      sim.addDye(u.x, u.y, 0.035, 0, 0, 0, 0.06 * dt * 60);
       if (Math.random() < 0.6) {
         const a = Math.random() * Math.PI * 2, r = 0.006 + Math.random() * 0.012;
         this.bubbles.spawn(this.fallPoint.x + Math.cos(a) * r, this.surfaceY + 0.002, this.fallPoint.z + Math.sin(a) * r,
           Math.cos(a) * 0.03, 0, Math.sin(a) * 0.03 + 0.02, { size: 0.003 + Math.random() * 0.003, life: 0.4 + Math.random() * 0.6, kind: 0, drag: 1.5 });
+      }
+      for (let k = 0; k < 2; k++) if (Math.random() < 0.7) {                     // 튀어 오르는 잔 물보라
+        const a = Math.random() * Math.PI * 2, v = 0.12 + Math.random() * 0.25;
+        this.bubbles.spawn(this.fallPoint.x + (Math.random() - 0.5) * 0.04, this.surfaceY + 0.004, this.fallPoint.z + (Math.random() - 0.5) * 0.02,
+          Math.cos(a) * v * 0.5, 0.25 + Math.random() * 0.35, Math.sin(a) * v * 0.5,
+          { color: [0.9, 0.97, 1], size: 0.0018 + Math.random() * 0.0022, life: 0.6, kind: 1, grav: 9.8, floorY: this.surfaceY - 0.003 });
       }
     }
     // 은은한 빛 알갱이 (늘)
